@@ -96,7 +96,7 @@ impl LocalCodeSearchHandler {
             .map_err(FunctionCallError::RespondToModel)?;
         let success = output.status.success();
         Ok(boxed_tool_output(FunctionToolOutput::from_text(
-            format_arc_idx_output(&exe, &argv, &output),
+            format_arc_idx_output(&output),
             Some(success),
         )))
     }
@@ -595,16 +595,13 @@ mod tests {
         assert_eq!(
             defaults,
             [
-                "search",
-                "UserService",
-                "--format",
-                "json",
-                "--max",
-                &DEFAULT_SEARCH_RESULTS.to_string(),
+                "search".to_string(),
+                "UserService".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+                "--max".to_string(),
+                DEFAULT_SEARCH_RESULTS.to_string(),
             ]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
         );
 
         let mut capped_args = args("search", "UserService");
