@@ -4,7 +4,6 @@
 //! Recover a deleted Unix cwd without changing workspace defaults for usable directories.
 
 use super::PidBackend;
-#[cfg(windows)]
 use super::PidCommandKind;
 use super::PidFileState;
 use super::PidRecord;
@@ -19,6 +18,9 @@ use tokio::process::Command;
 
 impl PidBackend {
     pub(super) async fn start_inner(&self, replacement: Option<PidRecord>) -> Result<Option<u32>> {
+        if matches!(self.command_kind, PidCommandKind::LegacyUpdaterCleanup) {
+            bail!("legacy daemon updater handles are stop-only");
+        }
         #[cfg(windows)]
         crate::backend::windows::ensure_not_elevated()?;
         if let Some(parent) = self.pid_file.parent() {
