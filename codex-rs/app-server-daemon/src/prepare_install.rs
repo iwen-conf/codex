@@ -302,7 +302,7 @@ async fn prepare_from_package(
             if let Err(cleanup_error) = async {
                 daemon
                     .current_installation()?
-                    .ensure_managed_updater(settings)
+                    .stop_managed_updater(settings)
                     .await
             }
             .await
