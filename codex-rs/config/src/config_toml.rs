@@ -163,8 +163,9 @@ pub struct FeatureToggleToml {
 /// `[local_search]` config for the `local_code_search` tool (`arc-idx`).
 ///
 /// When the section is omitted, search stays enabled and the command is
-/// resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then
-/// `~/.local/bin/arc-idx`.
+/// resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then `arc` on macOS,
+/// then `~/.local/bin/arc-idx` (or `~/.local/bin/arc` on macOS). The tool is
+/// only exposed when the resolved executable is actually runnable.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct LocalSearchToml {
