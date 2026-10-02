@@ -429,7 +429,7 @@ impl Daemon {
             )
         };
         if backend.is_some()
-            && let Err(err) = managed.ensure_managed_updater(&settings).await
+            && let Err(err) = managed.stop_managed_updater(&settings).await
         {
             self.diagnostic(format_args!(
                 "warning: failed to ensure managed updater after app-server start: {err:#}"
@@ -472,7 +472,7 @@ impl Daemon {
         }
         let pid = managed.start_managed_backend(&settings).await?;
         let info = self.wait_until_ready().await?;
-        if let Err(err) = managed.ensure_managed_updater(&settings).await {
+        if let Err(err) = managed.stop_managed_updater(&settings).await {
             eprintln!(
                 "warning: failed to ensure managed updater after app-server restart: {err:#}"
             );
@@ -771,7 +771,7 @@ impl Daemon {
                 .await?;
             let _ = self.start_managed_backend(&settings).await?;
             let info = self.wait_until_ready().await?;
-            if let Err(err) = self.ensure_managed_updater(&settings).await {
+            if let Err(err) = self.stop_managed_updater(&settings).await {
                 eprintln!(
                     "warning: failed to ensure managed updater after remote-control change: {err:#}"
                 );
@@ -820,12 +820,12 @@ impl Daemon {
         let backend = backend::pid_backend(managed.backend_paths(&settings));
         backend.start().await?;
         let info = self.wait_until_ready().await?;
-        let auto_update_enabled = managed.ensure_managed_updater(&settings).await?;
+        managed.stop_managed_updater(&settings).await?;
         let managed_codex_version = managed.managed_codex_version_best_effort().await;
         Ok(BootstrapOutput {
             status: BootstrapStatus::Bootstrapped,
             backend: BackendKind::Pid,
-            auto_update_enabled,
+            auto_update_enabled: false,
             remote_control_enabled: settings.remote_control_enabled,
             managed_codex_path: managed.managed_codex_bin,
             managed_codex_version,
@@ -868,13 +868,12 @@ impl Daemon {
         backend.start().await
     }
 
-    async fn ensure_managed_updater(&self, settings: &DaemonSettings) -> Result<bool> {
+    async fn stop_managed_updater(&self, settings: &DaemonSettings) -> Result<()> {
         // KAG never runs the upstream Codex updater. Stop any updater left by an
         // older installation so it cannot fetch or select an official release.
         backend::pid_update_loop_backend(self.backend_paths(settings))
             .stop()
-            .await?;
-        Ok(false)
+            .await
     }
 
     fn is_stable_standalone_release(&self) -> Result<bool> {
@@ -1196,7 +1195,7 @@ mod tests {
         let bootstrap_output = BootstrapOutput {
             status: BootstrapStatus::Bootstrapped,
             backend: BackendKind::Pid,
-            auto_update_enabled: true,
+            auto_update_enabled: false,
             remote_control_enabled: true,
             managed_codex_path: "codex".into(),
             managed_codex_version: Some("1.2.3".to_string()),
@@ -1211,7 +1210,7 @@ mod tests {
             serde_json::json!({
                 "status": "bootstrapped",
                 "backend": "pid",
-                "autoUpdateEnabled": true,
+                "autoUpdateEnabled": false,
                 "remoteControlEnabled": true,
                 "managedCodexPath": "codex",
                 "managedCodexVersion": "1.2.3",
