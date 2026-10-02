@@ -4,9 +4,7 @@
   "description": "Codex CLI is a coding agent from OpenAI that runs locally on your computer.",
   "license": "Apache-2.0",
   "bin": {
-    "codex": "bin/codex.js",
-    "kag": "bin/codex.js",
-    "kag_skip": "bin/codex.js"
+    "codex": "bin/codex.js"
   },
   "type": "module",
   "engines": {
@@ -17,8 +15,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openai/codex.git",
+    "url": "git+https://github.com/iwen-conf/codex.git",
     "directory": "codex-cli"
   },
-  "packageManager": "pnpm@10.34.5+sha512.a4ee05f2f73658255bd6a89859c065a45c28a57daefae2c893a168ee2b73168c37b91e83e57ea67654ad03f03031746430e8bce38e362e042605fb8abc80192e"
+  "packageManager": "pnpm@10.34.5+sha512.a4ee05f2f73658255bd6a89859c065a45c28a57daefae2c893a168ee2b73168c37b91e83e57ea67654ad03f03031746430e8bce38e362e042605fb8abc80192e",
+  "private": true,
+  "scripts": {
+    "prepublishOnly": "node -e \"console.error('npm publishing is disabled for the KAG fork'); process.exit(1)\""
+  }
 }

@@ -18,6 +18,7 @@ use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
 use crate::tools::handlers::LocalCodeSearchHandler;
+use crate::tools::handlers::local_code_search::local_code_search_available;
 use crate::tools::handlers::NewContextWindowHandler;
 use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
@@ -1151,7 +1152,9 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     let features = turn_context.config.features.get();
     let environment_mode = tool_environment_mode(context.environments);
 
-    if turn_context.config.local_search.is_enabled() {
+    if turn_context.config.local_search.is_enabled()
+        && local_code_search_available(turn_context.config.local_search.command.as_deref())
+    {
         registry.add(LocalCodeSearchHandler);
     }
 

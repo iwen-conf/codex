@@ -1478,57 +1478,8 @@ jobs:
     with:
       publish: true
 
-  stage-npm-packages:
-    name: stage npm packages
-    needs:
-      - build
-      - finalize-macos
-      - build-windows
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Download target artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: dist
-          pattern: "{aarch64,x86_64}-{apple-darwin{,-app-server},unknown-linux-musl{,-app-server},pc-windows-msvc}"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
-        with:
-          run_install: false
-
-      - name: Setup Node.js for npm packaging
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Stage npm packages
-        run: |
-          release_version="${GITHUB_REF_NAME#rust-v}"
-          ./scripts/stage_npm_packages.py \
-            --release-version "$release_version" \
-            --artifacts-dir "${GITHUB_WORKSPACE}/dist" \
-            --package codex \
-            --package codex-responses-api-proxy \
-            --package codex-sdk
-
-      - name: Upload staged npm packages
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: npm-packages
-          path: dist/npm/*.tgz
-          if-no-files-found: error
+  # npm packaging is intentionally disabled in the KAG fork. Native release
+  # artifacts remain the only supported distribution channel.
 
   release:
     needs:
@@ -1537,7 +1488,6 @@ jobs:
       - finalize-macos
       - build-windows
       - argument-comment-lint-release-assets
-      - stage-npm-packages
       - provisioned-macos-candidate
     if: >-
       ${{
@@ -1547,7 +1497,6 @@ jobs:
         needs.finalize-macos.result == 'success' &&
         needs.build-windows.result == 'success' &&
         needs.argument-comment-lint-release-assets.result == 'success' &&
-        needs.stage-npm-packages.result == 'success' &&
         (needs.provisioned-macos-candidate.result == 'success' ||
           (vars.CODEX_PROVISIONED_MACOS_CANDIDATE != 'true' &&
             needs.provisioned-macos-candidate.result == 'skipped'))
@@ -1561,8 +1510,6 @@ jobs:
       tag: ${{ github.ref_name }}
       make_latest: ${{ steps.release_name.outputs.make_latest }}
       prerelease: ${{ steps.release_name.outputs.prerelease }}
-      should_publish_npm: ${{ steps.npm_publish_settings.outputs.should_publish }}
-      npm_tag: ${{ steps.npm_publish_settings.outputs.npm_tag }}
 
     steps:
       - name: Checkout repository
@@ -1594,7 +1541,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
-          pattern: "{{aarch64,x86_64}-{apple-darwin{,-app-server},unknown-linux-musl{,-app-server},pc-windows-msvc},*-symbols,argument-comment-lint-*,python-runtime-wheel-*,npm-packages}"
+          pattern: "{{aarch64,x86_64}-{apple-darwin{,-app-server},unknown-linux-musl{,-app-server},pc-windows-msvc},*-symbols,argument-comment-lint-*,python-runtime-wheel-*}"
 
       - name: Download verified provisioned macOS packages
         if: vars.CODEX_PROVISIONED_MACOS_CANDIDATE == 'true'
@@ -1650,25 +1597,6 @@ jobs:
           else
             echo "make_latest=true" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Determine npm publish settings
-        id: npm_publish_settings
-        env:
-          VERSION: ${{ steps.release_name.outputs.name }}
-        run: |
-          set -euo pipefail
-          version="${VERSION}"
-
-          if [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=" >> "$GITHUB_OUTPUT"
-          elif [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=alpha" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Stage installer scripts
@@ -1759,179 +1687,7 @@ jobs:
           tag: ${{ github.ref_name }}
           config: .github/dotslash-provisioned-config.json
 
-  # Publish to npm using OIDC authentication.
-  # July 31, 2025: https://github.blog/changelog/2025-07-31-npm-trusted-publishing-with-oidc-is-generally-available/
-  # npm docs: https://docs.npmjs.com/trusted-publishers
-  publish-npm:
-    # Publish to npm for stable releases, numbered alphas, and alpha hotfixes.
-    if: >-
-      ${{
-        !cancelled() &&
-        needs.release.result == 'success' &&
-        needs.release.outputs.should_publish_npm == 'true'
-      }}
-    name: publish-npm
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write # Required for OIDC
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          # Node 24 bundles npm >= 11.5.1, which trusted publishing requires.
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
-          scope: "@openai"
-
-      - name: Download npm tarballs from release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.release.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          version="$RELEASE_VERSION"
-          tag="$RELEASE_TAG"
-          mkdir -p dist/npm
-          patterns=(
-            "codex-npm-${version}.tgz"
-            "codex-npm-linux-*-${version}.tgz"
-            "codex-npm-darwin-*-${version}.tgz"
-            "codex-npm-win32-*-${version}.tgz"
-            "codex-responses-api-proxy-npm-${version}.tgz"
-            "codex-sdk-npm-${version}.tgz"
-          )
-          for pattern in "${patterns[@]}"; do
-            gh release download "$tag" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --pattern "$pattern" \
-              --dir dist/npm
-          done
-
-      # No NODE_AUTH_TOKEN needed because we use OIDC.
-      - name: Publish to npm
-        env:
-          VERSION: ${{ needs.release.outputs.version }}
-          NPM_TAG: ${{ needs.release.outputs.npm_tag }}
-        run: |
-          set -euo pipefail
-          prefix=""
-          if [[ -n "${NPM_TAG}" ]]; then
-            prefix="${NPM_TAG}-"
-          fi
-
-          root_tarball="dist/npm/codex-npm-${VERSION}.tgz"
-          sdk_tarball="dist/npm/codex-sdk-npm-${VERSION}.tgz"
-          # Keep this list in sync with CODEX_PLATFORM_PACKAGES in
-          # codex-cli/scripts/build_npm_package.py. The root wrapper advances
-          # @openai/codex@latest as soon as it publishes, so every platform
-          # package it aliases must already exist in the registry first.
-          platform_tarballs=(
-            "dist/npm/codex-npm-linux-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-linux-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-arm64-${VERSION}.tgz"
-          )
-
-          for required_tarball in "${platform_tarballs[@]}" "${root_tarball}"; do
-            if [[ ! -f "${required_tarball}" ]]; then
-              echo "Missing npm tarball: ${required_tarball}"
-              exit 1
-            fi
-          done
-
-          shopt -s nullglob
-          other_tarballs=()
-          for tarball in dist/npm/*-"${VERSION}".tgz; do
-            if [[ "${tarball}" == "${root_tarball}" || "${tarball}" == "${sdk_tarball}" ]]; then
-              continue
-            fi
-
-            is_platform_tarball=false
-            for platform_tarball in "${platform_tarballs[@]}"; do
-              if [[ "${tarball}" == "${platform_tarball}" ]]; then
-                is_platform_tarball=true
-                break
-              fi
-            done
-            if [[ "${is_platform_tarball}" == true ]]; then
-              continue
-            fi
-
-            other_tarballs+=("${tarball}")
-          done
-
-          # npm returns HTTP 409 when concurrent publishes update the same
-          # packument. Every platform tarball is a version of @openai/codex,
-          # so publish all tarballs serially.
-          tarballs=(
-            "${platform_tarballs[@]}"
-            "${other_tarballs[@]}"
-            "${root_tarball}"
-          )
-          # The SDK depends on this exact root package version.
-          if [[ -f "${sdk_tarball}" ]]; then
-            tarballs+=("${sdk_tarball}")
-          fi
-
-          for tarball in "${tarballs[@]}"; do
-            filename="$(basename "${tarball}")"
-            tag=""
-
-            case "${filename}" in
-              codex-npm-linux-*-"${VERSION}".tgz|codex-npm-darwin-*-"${VERSION}".tgz|codex-npm-win32-*-"${VERSION}".tgz)
-                platform="${filename#codex-npm-}"
-                platform="${platform%-${VERSION}.tgz}"
-                tag="${prefix}${platform}"
-                ;;
-              codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
-                tag="${NPM_TAG}"
-                ;;
-              *)
-                echo "Unexpected npm tarball: ${filename}"
-                exit 1
-                ;;
-            esac
-
-            # The workflow concurrency group holds the lock from this lookup
-            # through publish, including concurrent alpha/hotfix release runs.
-            if [[ "${NPM_TAG}" == "alpha" ]]; then
-              tag="$(python3 .github/scripts/npm_alpha_tag.py "${tarball}" "${VERSION}" "${tag}")"
-            fi
-
-            publish_cmd=(npm publish "${GITHUB_WORKSPACE}/${tarball}")
-            if [[ -n "${tag}" ]]; then
-              publish_cmd+=(--tag "${tag}")
-            fi
-
-            echo "+ ${publish_cmd[*]}"
-            set +e
-            publish_output="$("${publish_cmd[@]}" 2>&1)"
-            publish_status=$?
-            set -e
-
-            echo "${publish_output}"
-            if [[ ${publish_status} -eq 0 ]]; then
-              continue
-            fi
-
-            if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
-              echo "Skipping already-published package version for ${filename}"
-              continue
-            fi
-
-            exit "${publish_status}"
-          done
+  # KAG is distributed as native release artifacts only. npm publication is disabled.
 
   deploy-dev-website:
     name: Trigger developers.openai.com deploy
@@ -2029,9 +1785,8 @@ jobs:
       ${{
         !cancelled() &&
         needs.release.result == 'success' &&
-        needs.release.outputs.npm_tag == 'alpha' &&
-        needs.publish-r2.result == 'success' &&
-        needs.publish-npm.result == 'success'
+        contains(needs.release.outputs.version, '-alpha.') &&
+        needs.publish-r2.result == 'success'
       }}
     permissions:
       contents: write
@@ -2039,7 +1794,6 @@ jobs:
     needs:
       - release
       - publish-r2
-      - publish-npm
     runs-on: ubuntu-latest
 
     steps:

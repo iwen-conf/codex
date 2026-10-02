@@ -18,7 +18,9 @@ main:
             set -eu
             cd codex-rs
             rustc --version
+            cargo fmt --all -- --check
             cargo check -p codex-cli --bin codex
+            cargo test -p codex-core local_code_search --lib
 
 "$":
   tag_push:
