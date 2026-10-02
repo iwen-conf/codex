@@ -160,18 +160,18 @@ pub struct FeatureToggleToml {
     pub enabled: Option<bool>,
 }
 
-/// `[local_search]` config for the `local_code_search` tool (`arc-idx`).
+/// `[local_search]` config for the `local_code_search` tool.
 ///
-/// When the section is omitted, search stays enabled and the command is
-/// resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then `arc` on macOS,
-/// then `~/.local/bin/arc-idx` (or `~/.local/bin/arc` on macOS). The tool is
-/// only exposed when the resolved executable is actually runnable.
+/// When the section is omitted, search stays enabled and `ai-code-index` is
+/// resolved from `AI_CODE_INDEX_BIN`, then `ai-code-index` on `PATH`, then
+/// `~/.local/bin/ai-code-index`. The tool is only exposed after a successful
+/// protocol-v1 capability handshake and only in a single local execution environment.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct LocalSearchToml {
     /// Defaults to true when unset.
     pub enabled: Option<bool>,
-    /// Executable name or absolute path. Unset uses the default resolution order.
+    /// ai-code-index executable name or absolute path. Unset uses the default resolution order.
     pub command: Option<String>,
 }
 
