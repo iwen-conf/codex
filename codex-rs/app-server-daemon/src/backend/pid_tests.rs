@@ -428,10 +428,9 @@ async fn shutdown_grace_handles_process_exit() {
             /*remote_control_enabled*/ false,
         );
         #[cfg(windows)]
-        let backend = PidBackend::new_update_loop(
+        let backend = PidBackend::new_legacy_updater_cleanup(
             temp.path().join("codex"),
-            pid_file,
-            /*restore_release*/ None,
+            pid_file
         );
         let result = tokio::time::timeout(
             Duration::from_secs(3),
@@ -501,10 +500,9 @@ async fn stopping_updater_signals_its_installer_process_group() {
     )
     .await
     .expect("write pid file");
-    let backend = PidBackend::new_update_loop(
+    let backend = PidBackend::new_legacy_updater_cleanup(
         temp.path().join("codex"),
-        pid_file,
-        /*restore_release*/ None,
+        pid_file
     );
     backend.stop().await.expect("stop updater");
     // The backend normally reaps the shim, so a second wait may return ECHILD.
@@ -544,10 +542,9 @@ async fn exited_unreaped_updater_is_reaped() {
         process_identity,
         executable_identity: None,
     };
-    let backend = PidBackend::new_update_loop(
+    let backend = PidBackend::new_legacy_updater_cleanup(
         temp.path().join("codex"),
-        temp.path().join("updater.pid"),
-        /*restore_release*/ None,
+        temp.path().join("updater.pid")
     );
     child.kill().expect("terminate updater shim");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -568,22 +565,15 @@ async fn exited_unreaped_updater_is_reaped() {
     );
 }
 
-#[test]
-fn update_loop_uses_hidden_app_server_subcommand() {
-    let backend = PidBackend {
-        feature_overrides: Default::default(),
-        codex_bin: "codex".into(),
-        pid_file: "updater.pid".into(),
-        lock_file: "updater.pid.lock".into(),
-        command_kind: PidCommandKind::UpdateLoop {
-            restore_release: None,
-        },
-    };
-
-    assert_eq!(
-        backend.command_args(),
-        vec!["app-server", "daemon", "pid-update-loop"]
+#[tokio::test]
+async fn legacy_updater_cleanup_is_stop_only() {
+    let backend = PidBackend::new_legacy_updater_cleanup(
+        "codex".into(),
+        "updater.pid".into(),
     );
+
+    let error = backend.start().await.expect_err("cleanup backend must not start");
+    assert!(error.to_string().contains("stop-only"));
 }
 
 #[test]
@@ -724,10 +714,9 @@ async fn managed_children_launch_in_workdir_without_changing_private_state_direc
             state_dir.join("app-server.pid"),
             /*remote_control_enabled*/ false,
         ),
-        PidBackend::new_update_loop(
+        PidBackend::new_legacy_updater_cleanup(
             codex_bin,
-            state_dir.join("updater.pid"),
-            /*restore_release*/ None,
+            state_dir.join("updater.pid")
         ),
     ];
     for backend in backends {
@@ -763,10 +752,9 @@ async fn failed_updater_handoff_preserves_predecessor_record() {
     codex_uds::prepare_private_socket_directory(&state_dir)
         .await
         .expect("private state directory");
-    let backend = PidBackend::new_update_loop(
+    let backend = PidBackend::new_legacy_updater_cleanup(
         temp.path().join("missing-codex.exe"),
-        state_dir.join("updater.pid"),
-        /*restore_release*/ None,
+        state_dir.join("updater.pid")
     );
     let record = PidRecord {
         pid: std::process::id(),
@@ -811,10 +799,9 @@ async fn updater_readiness_and_post_publication_failure_preserve_ownership() {
     use windows_sys::Win32::System::Threading::GetCurrentThread;
 
     let temp = TempDir::new().expect("temp");
-    let backend = PidBackend::new_update_loop(
+    let backend = PidBackend::new_legacy_updater_cleanup(
         temp.path().join("codex.exe"),
-        temp.path().join("updater.pid"),
-        /*restore_release*/ None,
+        temp.path().join("updater.pid")
     );
     let _lock = backend
         .acquire_reservation_lock()
@@ -1026,10 +1013,9 @@ async fn stderr_handoff_appends_after_truncation_without_gaps() -> anyhow::Resul
     use tokio::io::AsyncWriteExt;
 
     let home = TempDir::new()?;
-    let backend = PidBackend::new_update_loop(
+    let backend = PidBackend::new_legacy_updater_cleanup(
         home.path().join("codex"),
-        home.path().join("updater.pid"),
-        /*restore_release*/ None,
+        home.path().join("updater.pid")
     );
     let mut predecessor = backend.open_stderr_log().await?;
     predecessor.write_all(&vec![b'x'; 512 * 1024]).await?;
