@@ -160,6 +160,29 @@ pub struct FeatureToggleToml {
     pub enabled: Option<bool>,
 }
 
+/// `[local_search]` config for the `local_code_search` tool (`arc-idx`).
+///
+/// When the section is omitted, search stays enabled and the command is
+/// resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then
+/// `~/.local/bin/arc-idx`. The shell guard that rejects primary codebase
+/// discovery (`rg`, `grep`, `find`, `fd`, `ls -R`, `git grep`, `git ls-files`,
+/// `.ai-code-index/*.sh`, and ad-hoc `python`/`node` tree walks) runs only
+/// after that command is found.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LocalSearchToml {
+    /// Defaults to true when unset.
+    pub enabled: Option<bool>,
+    /// Executable name or absolute path. Unset uses the default resolution order.
+    pub command: Option<String>,
+}
+
+impl LocalSearchToml {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -558,6 +581,10 @@ pub struct ConfigToml {
     pub experimental_use_unified_exec_tool: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
     pub oss_provider: Option<String>,
+
+    /// Local codebase search via `arc-idx`. Omitted sections stay enabled.
+    #[serde(default)]
+    pub local_search: Option<LocalSearchToml>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]

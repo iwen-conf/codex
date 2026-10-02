@@ -14,6 +14,8 @@ use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::file_system_sandbox_policy_context_for_cwd;
 use crate::tools::handlers::implicit_granted_permissions;
+use crate::tools::handlers::local_code_search::codebase_search_block_reason;
+use crate::tools::handlers::local_code_search::local_search_shell_guard_active;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
@@ -244,6 +246,11 @@ impl ExecCommandHandler {
                 parse_arguments(&arguments)?
             }
         };
+        if local_search_shell_guard_active(&turn.config.local_search)
+            && let Some(message) = codebase_search_block_reason(&args.cmd)
+        {
+            return Err(FunctionCallError::RespondToModel(message.to_string()));
+        }
         if args.tty && !session.features().enabled(Feature::UnifiedExecTty) {
             return Err(FunctionCallError::RespondToModel(
                 "TTY execution is disabled by config; omit `tty` or set it to false.".to_string(),

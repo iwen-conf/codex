@@ -2288,6 +2288,21 @@
     "LegacyAppPathString": {
       "type": "string"
     },
+    "LocalSearchToml": {
+      "additionalProperties": false,
+      "description": "`[local_search]` config for the `local_code_search` tool (`arc-idx`).\n\nWhen the section is omitted, search stays enabled and the command is resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then `~/.local/bin/arc-idx`. The shell guard that rejects primary codebase discovery (`rg`, `grep`, `find`, `fd`, `ls -R`, `git grep`, `git ls-files`, `.ai-code-index/*.sh`, and ad-hoc `python`/`node` tree walks) runs only after that command is found.",
+      "properties": {
+        "command": {
+          "description": "Executable name or absolute path. Unset uses the default resolution order.",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Defaults to true when unset.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "MarketplaceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -7438,6 +7453,15 @@
     "instructions": {
       "description": "System instructions.",
       "type": "string"
+    },
+    "local_search": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/LocalSearchToml"
+        }
+      ],
+      "default": null,
+      "description": "Local codebase search via `arc-idx`. Omitted sections stay enabled."
     },
     "log_dir": {
       "allOf": [

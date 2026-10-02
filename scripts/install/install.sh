@@ -15,8 +15,10 @@ release_source="github"
 
 BIN_DIR="${CODEX_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_PATH="$BIN_DIR/codex"
+KAG_BIN_PATH="$BIN_DIR/kag"
+KAG_SKIP_BIN_PATH="$BIN_DIR/kag_skip"
 CODE_MODE_HOST_BIN_PATH="$BIN_DIR/codex-code-mode-host"
-CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+CODEX_HOME_DIR="${KAG_HOME:-${CODEX_HOME:-$HOME/.kag}}"
 STANDALONE_ROOT="$CODEX_HOME_DIR/packages/standalone"
 if [ "$DAEMON_ONLY" = "1" ]; then
   STANDALONE_ROOT="$CODEX_HOME_DIR/packages/app-server-daemon"
@@ -961,6 +963,10 @@ install_package_release() {
     chmod 0755 "$stage_release/codex-resources/bwrap"
   fi
   ln -sf "bin/codex" "$stage_release/codex"
+  ln -sf "codex" "$stage_release/bin/kag"
+  ln -sf "codex" "$stage_release/bin/kag_skip"
+  ln -sf "bin/codex" "$stage_release/kag"
+  ln -sf "bin/codex" "$stage_release/kag_skip"
 
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
     rm -rf "$release_dir"
@@ -1058,6 +1064,8 @@ update_visible_command() {
   codex_relative_path="$(release_codex_relative_path "$release_dir")"
 
   replace_path_with_symlink "$BIN_PATH" "$CURRENT_LINK/$codex_relative_path" "$tmp_link"
+  replace_path_with_symlink "$KAG_BIN_PATH" "$CURRENT_LINK/$codex_relative_path" "$tmp_link"
+  replace_path_with_symlink "$KAG_SKIP_BIN_PATH" "$CURRENT_LINK/$codex_relative_path" "$tmp_link"
 
   if [ "$os" = "darwin" ] && [ -x "$release_dir/bin/codex-code-mode-host" ]; then
     replace_path_with_symlink \

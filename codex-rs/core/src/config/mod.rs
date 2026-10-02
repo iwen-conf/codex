@@ -1155,6 +1155,9 @@ pub struct Config {
     /// Configured discoverable tools for tool suggestions.
     pub tool_suggest: ToolSuggestConfig,
 
+    /// Local `arc-idx` search (`local_code_search`). Omitted config is enabled.
+    pub local_search: codex_config::config_toml::LocalSearchToml,
+
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
     pub otel: codex_config::types::OtelConfig,
 }
@@ -4498,6 +4501,7 @@ impl Config {
                 .and_then(|feedback| feedback.enabled)
                 .unwrap_or(true),
             tool_suggest,
+            local_search: cfg.local_search.clone().unwrap_or_default(),
             tui_notifications: cfg
                 .tui
                 .as_ref()
@@ -4940,14 +4944,14 @@ fn normalize_guardian_policy_config(value: Option<&str>) -> Option<String> {
     })
 }
 
-/// Returns the path to the Codex configuration directory, which can be
-/// specified by the `CODEX_HOME` environment variable. If not set, defaults to
-/// `~/.codex`.
+/// Returns the path to the configuration directory.
 ///
-/// - If `CODEX_HOME` is set, the value must exist and be a directory. The
-///   value will be canonicalized and this function will Err otherwise.
-/// - If `CODEX_HOME` is not set, this function does not verify that the
-///   directory exists.
+/// Precedence is `KAG_HOME`, then `CODEX_HOME`, then `~/.kag`.
+///
+/// - If `KAG_HOME` or `CODEX_HOME` is set, the value must exist and be a
+///   directory. The value will be canonicalized and this function will Err
+///   otherwise.
+/// - If neither is set, this function does not verify that the directory exists.
 pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {
     codex_utils_home_dir::find_codex_home()
 }

@@ -2,6 +2,8 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
+use crate::tools::handlers::local_code_search::local_search_shell_guard_active;
+use crate::tools::handlers::local_code_search::stdin_codebase_search_block_reason;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::PostToolUsePayload;
@@ -79,6 +81,11 @@ impl WriteStdinHandler {
         };
 
         let args: WriteStdinArgs = parse_arguments(&arguments)?;
+        if local_search_shell_guard_active(&turn.config.local_search)
+            && let Some(message) = stdin_codebase_search_block_reason(&args.chars)
+        {
+            return Err(FunctionCallError::RespondToModel(message.to_string()));
+        }
         let context =
             UnifiedExecContext::new(session.clone(), step_context, cancellation_token, call_id);
         let response = session

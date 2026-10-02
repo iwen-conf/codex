@@ -10,6 +10,18 @@ default-run = "codex"
 name = "codex"
 path = "src/main.rs"
 
+# Install names for the kag fork. Same CLI entry as `codex`.
+# `kag_skip` is an argv0 alias of `kag`: this tree has no separate
+# skip-sandbox argv0 mode (`--dangerously-bypass-approvals-and-sandbox`
+# remains an explicit flag).
+[[bin]]
+name = "kag"
+path = "src/main.rs"
+
+[[bin]]
+name = "kag_skip"
+path = "src/main.rs"
+
 [[bin]]
 name = "logs_client"
 path = "src/bin/logs_client.rs"
