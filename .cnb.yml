@@ -20,7 +20,7 @@ main:
             rustc --version
             cargo fmt --all -- --check
             cargo check -p codex-cli --bin codex
-            cargo test -p codex-core local_code_search --lib
+            cargo test -p codex-core local_search --lib
 
 "$":
   tag_push:

@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tokio::io::AsyncRead;
@@ -22,7 +26,9 @@ use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde_json::json;
 
-const TOOL_NAME: &str = "local_code_search";
+pub(crate) const LOCAL_CODE_SEARCH_TOOL_NAME: &str = "local_code_search";
+const PROTOCOL_NAME: &str = "ai-code-index";
+const PROTOCOL_VERSION: u32 = 1;
 const MODEL_OUTPUT_LIMIT_BYTES: usize = 100_000;
 const PROCESS_OUTPUT_LIMIT_BYTES: usize = 512_000;
 const DEFAULT_SEARCH_RESULTS: u32 = 50;
@@ -30,13 +36,13 @@ const MAX_SEARCH_RESULTS: u32 = 100;
 const MAX_SEARCH_CONTEXT: u32 = 10;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
 
+static PROBE_CACHE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+
 #[derive(Debug, Deserialize)]
 struct LocalCodeSearchArgs {
     mode: String,
     #[serde(default)]
     query: String,
-    #[serde(default)]
-    profile: Option<String>,
     #[serde(default)]
     language: Option<String>,
     #[serde(default)]
@@ -49,11 +55,61 @@ struct LocalCodeSearchArgs {
     context: Option<u32>,
 }
 
-pub struct LocalCodeSearchHandler;
+#[derive(Debug, Deserialize)]
+struct ProtocolCapabilities {
+    name: String,
+    protocol_version: u32,
+    capabilities: ProtocolCapabilityFlags,
+    formats: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtocolCapabilityFlags {
+    search: bool,
+    symbol: bool,
+    files: bool,
+    ast: bool,
+    stats: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalCodeSearchHandler {
+    executable: PathBuf,
+}
+
+impl LocalCodeSearchHandler {
+    pub(crate) fn new(executable: PathBuf) -> Self {
+        Self { executable }
+    }
+
+    async fn handle_call(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
+        let ToolInvocation { turn, payload, .. } = invocation;
+        let ToolPayload::Function { arguments } = payload else {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "{LOCAL_CODE_SEARCH_TOOL_NAME} handler received unsupported payload"
+            )));
+        };
+        let args: LocalCodeSearchArgs = parse_arguments(&arguments)?;
+        let argv = ai_code_index_args(&args).map_err(FunctionCallError::RespondToModel)?;
+        let cwd = turn.config.cwd.clone();
+
+        let output = run_ai_code_index(&self.executable, &argv, cwd.as_path())
+            .await
+            .map_err(FunctionCallError::RespondToModel)?;
+        let success = output.status.success();
+        Ok(boxed_tool_output(FunctionToolOutput::from_text(
+            format_ai_code_index_output(&output),
+            Some(success),
+        )))
+    }
+}
 
 impl ToolExecutor<ToolInvocation> for LocalCodeSearchHandler {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain(TOOL_NAME)
+        ToolName::plain(LOCAL_CODE_SEARCH_TOOL_NAME)
     }
 
     fn spec(&self) -> ToolSpec {
@@ -73,34 +129,6 @@ impl ToolExecutor<ToolInvocation> for LocalCodeSearchHandler {
 }
 
 impl CoreToolRuntime for LocalCodeSearchHandler {}
-
-impl LocalCodeSearchHandler {
-    async fn handle_call(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
-        let ToolInvocation { turn, payload, .. } = invocation;
-        let ToolPayload::Function { arguments } = payload else {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "{TOOL_NAME} handler received unsupported payload"
-            )));
-        };
-        let args: LocalCodeSearchArgs = parse_arguments(&arguments)?;
-        let argv = arc_idx_args(&args).map_err(FunctionCallError::RespondToModel)?;
-        let configured = turn.config.local_search.command.as_deref();
-        let exe = arc_idx_executable(configured);
-        let cwd = turn.config.cwd.clone();
-
-        let output = run_arc_idx(&exe, &argv, cwd.as_path())
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
-        let success = output.status.success();
-        Ok(boxed_tool_output(FunctionToolOutput::from_text(
-            format_arc_idx_output(&output),
-            Some(success),
-        )))
-    }
-}
 
 fn create_local_code_search_tool() -> ToolSpec {
     let properties = BTreeMap::from([
@@ -127,12 +155,6 @@ fn create_local_code_search_tool() -> ToolSpec {
             )),
         ),
         (
-            "profile".to_string(),
-            JsonSchema::string(Some(
-                "Optional arc-idx profile from the repo .ai-code-index/config.json.".to_string(),
-            )),
-        ),
-        (
             "language".to_string(),
             JsonSchema::string(Some(
                 "Language for ast mode (passed as --lang). Required for ast.".to_string(),
@@ -147,7 +169,7 @@ fn create_local_code_search_tool() -> ToolSpec {
         (
             "exact".to_string(),
             JsonSchema::boolean(Some(
-                "When true, symbol mode passes --exact.".to_string(),
+                "When true, symbol mode requires an exact symbol name.".to_string(),
             )),
         ),
         (
@@ -165,12 +187,9 @@ fn create_local_code_search_tool() -> ToolSpec {
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
-        name: TOOL_NAME.to_string(),
+        name: LOCAL_CODE_SEARCH_TOOL_NAME.to_string(),
         description:
-            "Primary local code discovery via arc-idx (arc is also supported on macOS). Finds files, \
-symbols, content, AST patterns, and index inventory. Modes: search, symbol, files, ast, stats. \
-When this tool is available, prefer it over shell rg, grep, find, fd, git grep, recursive ls, \
-.ai-code-index/*.sh, or ad-hoc python/node tree walks for retrieval. Output is a JSON envelope."
+            "Local repository discovery backed by ai-code-index protocol v1. Finds files, symbols, content, AST patterns, and index inventory. Modes: search, symbol, files, ast, stats. Output is a JSON envelope whose data field contains the ai-code-index JSON response."
                 .to_string(),
         strict: false,
         defer_loading: None,
@@ -183,7 +202,7 @@ When this tool is available, prefer it over shell rg, grep, find, fd, git grep, 
     })
 }
 
-fn arc_idx_args(args: &LocalCodeSearchArgs) -> Result<Vec<String>, String> {
+fn ai_code_index_args(args: &LocalCodeSearchArgs) -> Result<Vec<String>, String> {
     let mode = args.mode.trim();
     match mode {
         "search" => {
@@ -192,25 +211,20 @@ fn arc_idx_args(args: &LocalCodeSearchArgs) -> Result<Vec<String>, String> {
             }
             let mut argv = vec![
                 "search".to_string(),
-                args.query.clone(),
                 "--format".to_string(),
                 "json".to_string(),
+                "--max".to_string(),
+                args.max
+                    .unwrap_or(DEFAULT_SEARCH_RESULTS)
+                    .clamp(1, MAX_SEARCH_RESULTS)
+                    .to_string(),
             ];
-            push_opt(&mut argv, "--profile", args.profile.as_deref());
             push_num(
                 &mut argv,
                 "--context",
                 args.context.map(|value| value.min(MAX_SEARCH_CONTEXT)),
             );
-            push_num(
-                &mut argv,
-                "--max",
-                Some(
-                    args.max
-                        .unwrap_or(DEFAULT_SEARCH_RESULTS)
-                        .clamp(1, MAX_SEARCH_RESULTS),
-                ),
-            );
+            argv.push(args.query.clone());
             Ok(argv)
         }
         "symbol" => {
@@ -219,7 +233,6 @@ fn arc_idx_args(args: &LocalCodeSearchArgs) -> Result<Vec<String>, String> {
             }
             let mut argv = vec![
                 "symbol".to_string(),
-                args.query.clone(),
                 "--format".to_string(),
                 "json".to_string(),
             ];
@@ -227,16 +240,18 @@ fn arc_idx_args(args: &LocalCodeSearchArgs) -> Result<Vec<String>, String> {
             if args.exact {
                 argv.push("--exact".to_string());
             }
+            argv.push(args.query.clone());
             Ok(argv)
         }
         "files" => {
-            let mut argv = vec!["files".to_string()];
+            let mut argv = vec![
+                "files".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ];
             if !args.query.trim().is_empty() {
                 argv.push(args.query.clone());
             }
-            push_opt(&mut argv, "--profile", args.profile.as_deref());
-            argv.push("--format".to_string());
-            argv.push("json".to_string());
             Ok(argv)
         }
         "ast" => {
@@ -251,22 +266,18 @@ fn arc_idx_args(args: &LocalCodeSearchArgs) -> Result<Vec<String>, String> {
             }
             Ok(vec![
                 "ast".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
                 "--lang".to_string(),
                 language.to_string(),
                 args.query.clone(),
-                "--format".to_string(),
-                "json".to_string(),
             ])
         }
-        "stats" => {
-            let mut argv = vec![
-                "stats".to_string(),
-                "--format".to_string(),
-                "json".to_string(),
-            ];
-            push_opt(&mut argv, "--profile", args.profile.as_deref());
-            Ok(argv)
-        }
+        "stats" => Ok(vec![
+            "stats".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ]),
         other => Err(format!(
             "unknown local_code_search mode `{other}`; expected search, symbol, files, ast, or stats"
         )),
@@ -292,7 +303,7 @@ struct BoundedCapture {
     truncated: bool,
 }
 
-struct ArcIdxOutput {
+struct LocalSearchOutput {
     status: std::process::ExitStatus,
     stdout: String,
     stderr: String,
@@ -330,9 +341,7 @@ where
     })
 }
 
-fn configure_arc_idx_env(command: &mut tokio::process::Command) {
-    command.env_clear();
-
+fn safe_environment() -> Vec<(OsString, OsString)> {
     const SAFE_ENV_KEYS: &[&str] = &[
         "PATH",
         "HOME",
@@ -353,23 +362,42 @@ fn configure_arc_idx_env(command: &mut tokio::process::Command) {
         "PATHEXT",
     ];
 
-    for key in SAFE_ENV_KEYS {
+    let mut values = Vec::new();
+    for &key in SAFE_ENV_KEYS {
         if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
+            values.push((OsString::from(key), value));
         }
     }
-
     for (key, value) in std::env::vars_os() {
         let key_text = key.to_string_lossy();
-        if key_text.starts_with("ARC_IDX_") || key_text.starts_with("LC_") {
-            command.env(&key, value);
+        if key_text.starts_with("AI_CODE_INDEX_") || key_text.starts_with("LC_") {
+            values.push((key, value));
         }
+    }
+    values
+}
+
+fn configure_async_environment(command: &mut tokio::process::Command) {
+    command.env_clear();
+    for (key, value) in safe_environment() {
+        command.env(key, value);
     }
 }
 
-async fn run_arc_idx(exe: &Path, argv: &[String], cwd: &Path) -> Result<ArcIdxOutput, String> {
+fn configure_probe_environment(command: &mut std::process::Command) {
+    command.env_clear();
+    for (key, value) in safe_environment() {
+        command.env(key, value);
+    }
+}
+
+async fn run_ai_code_index(
+    exe: &Path,
+    argv: &[String],
+    cwd: &Path,
+) -> Result<LocalSearchOutput, String> {
     let mut command = tokio::process::Command::new(exe);
-    configure_arc_idx_env(&mut command);
+    configure_async_environment(&mut command);
     command
         .args(argv)
         .current_dir(cwd)
@@ -380,7 +408,7 @@ async fn run_arc_idx(exe: &Path, argv: &[String], cwd: &Path) -> Result<ArcIdxOu
 
     let mut child = command.spawn().map_err(|err| {
         format!(
-            "local_code_search could not start `{}`: {err}. Install arc-idx (or arc on macOS), set ARC_IDX_BIN, or configure [local_search].command.",
+            "local_code_search could not start `{}`: {err}. Install ai-code-index, set AI_CODE_INDEX_BIN, or configure [local_search].command.",
             exe.display()
         )
     })?;
@@ -420,7 +448,7 @@ async fn run_arc_idx(exe: &Path, argv: &[String], cwd: &Path) -> Result<ArcIdxOu
         }
     };
 
-    Ok(ArcIdxOutput {
+    Ok(LocalSearchOutput {
         status,
         stdout: stdout.text,
         stderr: stderr.text,
@@ -442,7 +470,7 @@ fn truncate_utf8(text: &str, max_bytes: usize) -> String {
     preview
 }
 
-fn format_arc_idx_output(output: &ArcIdxOutput) -> String {
+fn format_ai_code_index_output(output: &LocalSearchOutput) -> String {
     let stdout = output.stdout.trim();
     let parsed = if stdout.is_empty() {
         serde_json::Value::Null
@@ -482,27 +510,79 @@ fn format_arc_idx_output(output: &ArcIdxOutput) -> String {
     .unwrap_or_else(|_| "{\"ok\":false,\"error\":\"failed_to_serialize_tool_output\"}".to_string())
 }
 
-pub(crate) fn local_code_search_available(configured: Option<&str>) -> bool {
-    resolve_existing_arc_idx(configured).is_some()
+pub(crate) fn local_code_search_backend(configured: Option<&str>) -> Option<PathBuf> {
+    let executable = resolve_candidate(configured)?;
+    protocol_compatible(&executable).then_some(executable)
 }
 
-fn arc_idx_executable(configured: Option<&str>) -> PathBuf {
-    resolve_existing_arc_idx(configured).unwrap_or_else(|| {
-        configured
-            .map(str::trim)
-            .filter(|command| !command.is_empty())
-            .map_or_else(|| PathBuf::from("arc-idx"), PathBuf::from)
-    })
-}
-
-fn resolve_existing_arc_idx(configured: Option<&str>) -> Option<PathBuf> {
-    match configured
+fn resolve_candidate(configured: Option<&str>) -> Option<PathBuf> {
+    if let Some(command) = configured
         .map(str::trim)
         .filter(|command| !command.is_empty())
     {
-        Some(command) => existing_command(command),
-        None => default_arc_idx(),
+        return existing_command(command);
     }
+
+    if let Ok(env_value) = std::env::var("AI_CODE_INDEX_BIN") {
+        let env_value = env_value.trim();
+        if !env_value.is_empty()
+            && let Some(found) = existing_command(env_value)
+        {
+            return Some(found);
+        }
+    }
+
+    if let Ok(found) = which::which("ai-code-index") {
+        return Some(found);
+    }
+
+    local_bin_candidate("ai-code-index")
+}
+
+fn protocol_compatible(executable: &Path) -> bool {
+    let cache = PROBE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock()
+        && let Some(compatible) = cache.get(executable)
+    {
+        return *compatible;
+    }
+
+    let compatible = probe_protocol(executable);
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(executable.to_path_buf(), compatible);
+    }
+    compatible
+}
+
+fn probe_protocol(executable: &Path) -> bool {
+    let mut command = std::process::Command::new(executable);
+    configure_probe_environment(&mut command);
+    let output = match command
+        .args(["capabilities", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => return false,
+    };
+
+    let capabilities: ProtocolCapabilities = match serde_json::from_slice(&output.stdout) {
+        Ok(capabilities) => capabilities,
+        Err(_) => return false,
+    };
+    capabilities_are_compatible(&capabilities)
+}
+
+fn capabilities_are_compatible(capabilities: &ProtocolCapabilities) -> bool {
+    capabilities.name == PROTOCOL_NAME
+        && capabilities.protocol_version == PROTOCOL_VERSION
+        && capabilities.formats.iter().any(|format| format == "json")
+        && capabilities.capabilities.search
+        && capabilities.capabilities.symbol
+        && capabilities.capabilities.files
+        && capabilities.capabilities.ast
+        && capabilities.capabilities.stats
 }
 
 fn existing_command(command: &str) -> Option<PathBuf> {
@@ -533,37 +613,6 @@ fn path_is_executable(path: &Path) -> bool {
     }
 }
 
-fn default_arc_idx() -> Option<PathBuf> {
-    if let Ok(env_value) = std::env::var("ARC_IDX_BIN") {
-        let env_value = env_value.trim();
-        if !env_value.is_empty()
-            && let Some(found) = existing_command(env_value)
-        {
-            return Some(found);
-        }
-    }
-
-    if let Ok(found) = which::which("arc-idx") {
-        return Some(found);
-    }
-
-    #[cfg(target_os = "macos")]
-    if let Ok(found) = which::which("arc") {
-        return Some(found);
-    }
-
-    if let Some(found) = local_bin_candidate("arc-idx") {
-        return Some(found);
-    }
-
-    #[cfg(target_os = "macos")]
-    if let Some(found) = local_bin_candidate("arc") {
-        return Some(found);
-    }
-
-    None
-}
-
 fn local_bin_candidate(name: &str) -> Option<PathBuf> {
     let path = dirs::home_dir()?.join(".local").join("bin").join(name);
     path_is_executable(&path).then_some(path)
@@ -575,13 +624,14 @@ mod tests {
     use super::LocalCodeSearchArgs;
     use super::MAX_SEARCH_CONTEXT;
     use super::MAX_SEARCH_RESULTS;
-    use super::arc_idx_args;
+    use super::ProtocolCapabilities;
+    use super::ai_code_index_args;
+    use super::capabilities_are_compatible;
 
     fn args(mode: &str, query: &str) -> LocalCodeSearchArgs {
         LocalCodeSearchArgs {
             mode: mode.to_string(),
             query: query.to_string(),
-            profile: None,
             language: None,
             kind: None,
             exact: false,
@@ -590,65 +640,104 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn accepts_only_complete_protocol_v1_capabilities() {
+        let compatible: ProtocolCapabilities = serde_json::from_str(
+            r#"{
+                "name":"ai-code-index",
+                "protocol_version":1,
+                "version":"0.2.0",
+                "capabilities":{
+                    "search":true,
+                    "symbol":true,
+                    "files":true,
+                    "ast":true,
+                    "stats":true
+                },
+                "formats":["json"]
+            }"#,
+        )
+        .expect("valid capabilities");
+        assert!(capabilities_are_compatible(&compatible));
+
+        let incompatible: ProtocolCapabilities = serde_json::from_str(
+            r#"{
+                "name":"ai-code-index",
+                "protocol_version":2,
+                "capabilities":{
+                    "search":true,
+                    "symbol":true,
+                    "files":true,
+                    "ast":true,
+                    "stats":true
+                },
+                "formats":["json"]
+            }"#,
+        )
+        .expect("valid incompatible capabilities");
+        assert!(!capabilities_are_compatible(&incompatible));
+    }
+
     #[test]
     fn search_defaults_and_caps_limits() {
-        let defaults = arc_idx_args(&args("search", "UserService")).expect("search args");
+        let defaults = ai_code_index_args(&args("search", "UserService")).expect("search args");
         assert_eq!(
             defaults,
             [
                 "search".to_string(),
-                "UserService".to_string(),
                 "--format".to_string(),
                 "json".to_string(),
                 "--max".to_string(),
                 DEFAULT_SEARCH_RESULTS.to_string(),
+                "UserService".to_string(),
             ]
         );
 
         let mut capped_args = args("search", "UserService");
         capped_args.max = Some(u32::MAX);
         capped_args.context = Some(u32::MAX);
-        let capped = arc_idx_args(&capped_args).expect("capped search args");
+        let capped = ai_code_index_args(&capped_args).expect("capped search args");
         assert_eq!(
             capped,
             [
                 "search".to_string(),
-                "UserService".to_string(),
                 "--format".to_string(),
                 "json".to_string(),
-                "--context".to_string(),
-                MAX_SEARCH_CONTEXT.to_string(),
                 "--max".to_string(),
                 MAX_SEARCH_RESULTS.to_string(),
+                "--context".to_string(),
+                MAX_SEARCH_CONTEXT.to_string(),
+                "UserService".to_string(),
             ]
         );
     }
 
     #[test]
-    fn maps_discovery_modes_to_json_output() {
+    fn maps_discovery_modes_to_protocol_v1() {
         let mut symbol_args = args("symbol", "UserService");
         symbol_args.kind = Some("struct".to_string());
         symbol_args.exact = true;
         assert_eq!(
-            arc_idx_args(&symbol_args).expect("symbol args"),
+            ai_code_index_args(&symbol_args).expect("symbol args"),
             [
                 "symbol",
-                "UserService",
                 "--format",
                 "json",
                 "--kind",
                 "struct",
                 "--exact",
+                "UserService",
             ]
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>()
         );
 
-        let files = arc_idx_args(&args("files", "auth")).expect("files args");
+        let files = ai_code_index_args(&args("files", "auth")).expect("files args");
         assert_eq!(
             files,
-            ["files", "auth", "--format", "json"]
+            ["files", "--format", "json", "auth"]
                 .into_iter()
                 .map(str::to_string)
                 .collect::<Vec<_>>()
@@ -657,15 +746,15 @@ mod tests {
         let mut ast_args = args("ast", "fn $NAME()");
         ast_args.language = Some("rust".to_string());
         assert_eq!(
-            arc_idx_args(&ast_args).expect("ast args"),
-            ["ast", "--lang", "rust", "fn $NAME()", "--format", "json"]
+            ai_code_index_args(&ast_args).expect("ast args"),
+            ["ast", "--format", "json", "--lang", "rust", "fn $NAME()"]
                 .into_iter()
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         );
 
         assert_eq!(
-            arc_idx_args(&args("stats", "")).expect("stats args"),
+            ai_code_index_args(&args("stats", "")).expect("stats args"),
             ["stats", "--format", "json"]
                 .into_iter()
                 .map(str::to_string)

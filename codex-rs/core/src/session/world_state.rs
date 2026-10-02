@@ -12,6 +12,7 @@ use crate::context::world_state::ContextWindowGuidanceState;
 use crate::context::world_state::EnvironmentsInstructionsState;
 use crate::context::world_state::EnvironmentsState;
 use crate::context::world_state::ManagedDeveloperInstructionsState;
+use crate::context::world_state::LocalSearchInstructionsState;
 use crate::context::world_state::ModelCatalogState;
 use crate::context::world_state::ModelInstructionsState;
 use crate::context::world_state::MultiAgentModeState;
@@ -22,6 +23,7 @@ use crate::context::world_state::PluginsInstructionsState;
 use crate::context::world_state::RealtimeState;
 use crate::context::world_state::ToolsState;
 use crate::context::world_state::WorldState;
+use crate::tools::handlers::local_code_search::LOCAL_CODE_SEARCH_TOOL_NAME;
 use crate::tools::handlers::multi_agents_spec::MULTI_AGENT_V1_NAMESPACE;
 use codex_connectors::AppToolPolicyEvaluator;
 use codex_extension_api::WorldStateContributionInput;
@@ -254,6 +256,11 @@ impl Session {
                     .config
                     .features
                     .enabled(Feature::DeferredExecutor),
+        ));
+        world_state.add_section(LocalSearchInstructionsState::new(
+            step_context
+                .tool_router
+                .exposes_tool(&ToolName::plain(LOCAL_CODE_SEARCH_TOOL_NAME)),
         ));
         let apps_available =
             if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
