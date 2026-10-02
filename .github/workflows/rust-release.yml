@@ -1759,17 +1759,9 @@ jobs:
           tag: ${{ github.ref_name }}
           config: .github/dotslash-provisioned-config.json
 
-  # Publish to npm using OIDC authentication.
-  # July 31, 2025: https://github.blog/changelog/2025-07-31-npm-trusted-publishing-with-oidc-is-generally-available/
-  # npm docs: https://docs.npmjs.com/trusted-publishers
+  # KAG is distributed as native release artifacts only. npm publication is disabled.
   publish-npm:
-    # Publish to npm for stable releases, numbered alphas, and alpha hotfixes.
-    if: >-
-      ${{
-        !cancelled() &&
-        needs.release.result == 'success' &&
-        needs.release.outputs.should_publish_npm == 'true'
-      }}
+    if: ${{ false }}
     name: publish-npm
     needs: release
     runs-on: ubuntu-latest
