@@ -363,7 +363,7 @@ fn safe_environment() -> Vec<(OsString, OsString)> {
     ];
 
     let mut values = Vec::new();
-    for key in SAFE_ENV_KEYS {
+    for &key in SAFE_ENV_KEYS {
         if let Some(value) = std::env::var_os(key) {
             values.push((OsString::from(key), value));
         }
@@ -571,6 +571,10 @@ fn probe_protocol(executable: &Path) -> bool {
         Ok(capabilities) => capabilities,
         Err(_) => return false,
     };
+    capabilities_are_compatible(&capabilities)
+}
+
+fn capabilities_are_compatible(capabilities: &ProtocolCapabilities) -> bool {
     capabilities.name == PROTOCOL_NAME
         && capabilities.protocol_version == PROTOCOL_VERSION
         && capabilities.formats.iter().any(|format| format == "json")
@@ -620,7 +624,9 @@ mod tests {
     use super::LocalCodeSearchArgs;
     use super::MAX_SEARCH_CONTEXT;
     use super::MAX_SEARCH_RESULTS;
+    use super::ProtocolCapabilities;
     use super::ai_code_index_args;
+    use super::capabilities_are_compatible;
 
     fn args(mode: &str, query: &str) -> LocalCodeSearchArgs {
         LocalCodeSearchArgs {
@@ -632,6 +638,45 @@ mod tests {
             max: None,
             context: None,
         }
+    }
+
+
+    #[test]
+    fn accepts_only_complete_protocol_v1_capabilities() {
+        let compatible: ProtocolCapabilities = serde_json::from_str(
+            r#"{
+                "name":"ai-code-index",
+                "protocol_version":1,
+                "version":"0.2.0",
+                "capabilities":{
+                    "search":true,
+                    "symbol":true,
+                    "files":true,
+                    "ast":true,
+                    "stats":true
+                },
+                "formats":["json"]
+            }"#,
+        )
+        .expect("valid capabilities");
+        assert!(capabilities_are_compatible(&compatible));
+
+        let incompatible: ProtocolCapabilities = serde_json::from_str(
+            r#"{
+                "name":"ai-code-index",
+                "protocol_version":2,
+                "capabilities":{
+                    "search":true,
+                    "symbol":true,
+                    "files":true,
+                    "ast":true,
+                    "stats":true
+                },
+                "formats":["json"]
+            }"#,
+        )
+        .expect("valid incompatible capabilities");
+        assert!(!capabilities_are_compatible(&incompatible));
     }
 
     #[test]
