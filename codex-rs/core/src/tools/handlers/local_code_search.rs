@@ -346,6 +346,7 @@ fn configure_arc_idx_env(command: &mut tokio::process::Command) {
         "XDG_CACHE_HOME",
         "XDG_DATA_HOME",
         "XDG_STATE_HOME",
+        "XDG_RUNTIME_DIR",
         "SYSTEMROOT",
         "WINDIR",
         "COMSPEC",
