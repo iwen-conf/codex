@@ -237,6 +237,7 @@ mod turn_tip;
 mod ui_consts;
 mod unarchive_prompt;
 pub(crate) mod update_action;
+mod update_versions;
 mod worktree_startup;
 pub use update_action::DaemonUpdateSource;
 pub use update_action::UpdateAction;
