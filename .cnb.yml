@@ -1,0 +1,75 @@
+# kag — CNB build & release
+# - push to main: cargo check (fast gate)
+# - tag_push (v* or rust-v*): release Linux x86_64 binary as kag artifact
+
+.rust-bookworm: &rust-bookworm
+  docker:
+    image: rust:1.95.0-bookworm
+  runner:
+    cpus: 8
+
+main:
+  push:
+    - name: check
+      <<: *rust-bookworm
+      stages:
+        - name: cargo-check
+          script: |
+            set -euo pipefail
+            cd codex-rs
+            rustc --version
+            cargo check -p codex-cli --bin codex
+
+"$":
+  tag_push:
+    - name: release-linux
+      <<: *rust-bookworm
+      stages:
+        - name: build
+          script: |
+            set -euo pipefail
+            cd codex-rs
+            rustc --version
+            cargo build -p codex-cli --release --bin codex
+            mkdir -p ../dist
+            cp target/release/codex "../dist/kag-${CNB_BRANCH}-x86_64-unknown-linux-gnu"
+            tar -C ../dist -czf "../dist/kag-${CNB_BRANCH}-x86_64-unknown-linux-gnu.tar.gz" \
+              "kag-${CNB_BRANCH}-x86_64-unknown-linux-gnu"
+            ls -lh ../dist
+            echo "ARTIFACT=dist/kag-${CNB_BRANCH}-x86_64-unknown-linux-gnu.tar.gz" >> "$CNB_BUILD_WORKSPACE/.kag-artifact.env"
+        - name: create-release
+          type: git:release
+          options:
+            tag: ${CNB_BRANCH}
+            description: "kag ${CNB_BRANCH} (linux x86_64)"
+        - name: upload-asset
+          script: |
+            set -euo pipefail
+            # shellcheck disable=SC1091
+            source "$CNB_BUILD_WORKSPACE/.kag-artifact.env"
+            test -f "$ARTIFACT"
+            SIZE=$(wc -c < "$ARTIFACT" | tr -d ' ')
+            NAME=$(basename "$ARTIFACT")
+            # Resolve release id by tag
+            REL_JSON=$(cnb releases get-release-by-tag --repo "$CNB_REPO_SLUG" --tag "$CNB_BRANCH" --verbose)
+            REL_ID=$(printf '%s' "$REL_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("data") or d).get("id") or (d.get("data") or d).get("release_id") or "")')
+            if [ -z "$REL_ID" ]; then
+              echo "failed to resolve release id for tag $CNB_BRANCH" >&2
+              echo "$REL_JSON" >&2
+              exit 1
+            fi
+            UP_JSON=$(cnb releases post-release-asset-upload-url \
+              --repo "$CNB_REPO_SLUG" \
+              --release-id "$REL_ID" \
+              --asset-name "$NAME" \
+              --size "$SIZE" \
+              --overwrite \
+              --verbose)
+            UPLOAD_URL=$(printf '%s' "$UP_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); data=(d.get("data") or d); print(data.get("upload_url") or data.get("url") or "")')
+            if [ -z "$UPLOAD_URL" ]; then
+              echo "failed to get upload url" >&2
+              echo "$UP_JSON" >&2
+              exit 1
+            fi
+            curl -fsSL -X PUT -H "Content-Type: application/octet-stream" --data-binary @"$ARTIFACT" "$UPLOAD_URL"
+            echo "uploaded $NAME ($SIZE bytes)"
