@@ -198,32 +198,6 @@ pub struct RemoteControlOutput {
     pub app_server_version: Option<String>,
 }
 
-#[cfg(any(unix, windows))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RestartIfRunningOutcome {
-    Busy,
-    NotRunning,
-    NotReady,
-    AlreadyCurrent,
-    Restarted,
-}
-
-#[cfg(any(unix, windows))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RestartMode {
-    IfVersionChanged,
-    IfBinaryOrVersionChanged,
-    Always,
-}
-
-#[cfg(any(unix, windows))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RestartDecision {
-    NotReady,
-    AlreadyCurrent,
-    Restart,
-}
-
 pub async fn run(command: LifecycleCommand) -> Result<LifecycleOutput> {
     ensure_supported_platform()?;
     #[cfg(windows)]
@@ -432,7 +406,7 @@ impl Daemon {
             && let Err(err) = managed.stop_managed_updater(&settings).await
         {
             self.diagnostic(format_args!(
-                "warning: failed to ensure managed updater after app-server start: {err:#}"
+                "warning: failed to stop stale daemon updater after app-server start: {err:#}"
             ));
         }
         Ok(managed
@@ -474,7 +448,7 @@ impl Daemon {
         let info = self.wait_until_ready().await?;
         if let Err(err) = managed.stop_managed_updater(&settings).await {
             eprintln!(
-                "warning: failed to ensure managed updater after app-server restart: {err:#}"
+                "warning: failed to stop stale daemon updater after app-server restart: {err:#}"
             );
         }
         Ok(managed
@@ -485,109 +459,6 @@ impl Daemon {
                 Some(info.app_server_version),
             )
             .await)
-    }
-
-    #[cfg(any(unix, windows))]
-    pub(crate) async fn try_restart_if_running(
-        &self,
-        mode: RestartMode,
-        managed_codex_bin: &Path,
-    ) -> Result<RestartIfRunningOutcome> {
-        let operation_lock = self.open_operation_lock_file().await?;
-        if !try_lock_file(&operation_lock)? {
-            return Ok(RestartIfRunningOutcome::Busy);
-        }
-        let settings = self.load_settings().await?;
-        let outcome = if let Some(backend) = self.running_backend_instance(&settings).await? {
-            let info = client::probe(&self.socket_path).await.ok();
-            let managed_version = if info.is_some() {
-                Some(managed_codex_version(managed_codex_bin).await?)
-            } else {
-                None
-            };
-            // The installer can retarget `current` while the updater waits for
-            // this lock or probes the running server. Never restart from a
-            // release that is no longer the selected latest-channel binary.
-            if !self.is_stable_standalone_release()?
-                || managed_install::resolved_managed_codex_bin(&self.current_managed_codex_bin()?)
-                    .await
-                    .ok()
-                    .as_deref()
-                    != Some(managed_codex_bin)
-            {
-                return Ok(RestartIfRunningOutcome::AlreadyCurrent);
-            }
-            let mode = if mode == RestartMode::IfBinaryOrVersionChanged {
-                let managed_identity =
-                    managed_install::executable_identity(managed_codex_bin).await?;
-                if backend.running_executable_identity().await?.as_ref() == Some(&managed_identity)
-                {
-                    RestartMode::IfVersionChanged
-                } else {
-                    RestartMode::Always
-                }
-            } else {
-                mode
-            };
-            match restart_decision(mode, info.as_ref(), managed_version.as_deref()) {
-                RestartDecision::NotReady => {
-                    diagnostics::event("daemon_not_ready", ());
-                    return Ok(RestartIfRunningOutcome::NotReady);
-                }
-                RestartDecision::AlreadyCurrent => RestartIfRunningOutcome::AlreadyCurrent,
-                RestartDecision::Restart => {
-                    #[cfg(windows)]
-                    backend::windows::ensure_detached_launch(managed_codex_bin)?;
-                    if let Err(err) = thread_recovery::discard_pending(self) {
-                        eprintln!(
-                            "warning: failed to clear stale daemon recovery before update: {err}"
-                        );
-                    }
-                    diagnostics::event(
-                        "restart_requested",
-                        serde_json::json!({
-                                "shutdownGraceSeconds": settings.shutdown_grace_seconds,
-                        }),
-                    );
-                    let started = std::time::Instant::now();
-                    diagnostics::result(
-                        "shutdown",
-                        started,
-                        backend
-                            .stop_with_grace(settings.shutdown_grace_seconds)
-                            .await,
-                    )?;
-                    let started = std::time::Instant::now();
-                    diagnostics::result(
-                        "replacement_launch",
-                        started,
-                        self.start_managed_backend_with_bin(&settings, managed_codex_bin)
-                            .await,
-                    )?;
-                    let started = std::time::Instant::now();
-                    diagnostics::result("readiness", started, self.wait_until_ready().await)?;
-                    RestartIfRunningOutcome::Restarted
-                }
-            }
-        } else if client::probe(&self.socket_path).await.is_ok() {
-            return Err(anyhow!(
-                "app server is running but is not managed by codex app-server daemon"
-            ));
-        } else {
-            diagnostics::event("daemon_not_running", ());
-            RestartIfRunningOutcome::NotRunning
-        };
-
-        if !self.is_stable_standalone_release()?
-            || managed_install::resolved_managed_codex_bin(&self.current_managed_codex_bin()?)
-                .await
-                .ok()
-                .as_deref()
-                != Some(managed_codex_bin)
-        {
-            return Ok(RestartIfRunningOutcome::AlreadyCurrent);
-        }
-        Ok(outcome)
     }
 
     async fn stop(&self) -> Result<LifecycleOutput> {
@@ -773,7 +644,7 @@ impl Daemon {
             let info = self.wait_until_ready().await?;
             if let Err(err) = self.stop_managed_updater(&settings).await {
                 eprintln!(
-                    "warning: failed to ensure managed updater after remote-control change: {err:#}"
+                    "warning: failed to stop stale daemon updater after remote-control change: {err:#}"
                 );
             }
             Some(info.app_server_version)
@@ -876,18 +747,6 @@ impl Daemon {
             .await
     }
 
-    fn is_stable_standalone_release(&self) -> Result<bool> {
-        let codex_home = self
-            .settings_file
-            .parent()
-            .and_then(Path::parent)
-            .context("daemon settings path has no Codex home")?;
-        Ok(managed_install::is_stable_standalone_release(
-            codex_home,
-            &self.current_managed_codex_bin()?,
-        ))
-    }
-
     fn current_managed_codex_bin(&self) -> Result<PathBuf> {
         // An installer can move a legacy binary into bin/ while this updater runs.
         let home = self
@@ -896,17 +755,6 @@ impl Daemon {
             .and_then(Path::parent)
             .context("daemon settings path has no Codex home")?;
         Ok(managed_install::managed_codex_bin(home))
-    }
-
-    fn has_latest_selection_marker(&self) -> bool {
-        self.settings_file
-            .parent()
-            .and_then(Path::parent)
-            .is_some_and(|home| {
-                managed_install::package_root(home)
-                    .join("auto-update-version")
-                    .is_file()
-            })
     }
 
     async fn is_bootstrapped(&self, settings: &DaemonSettings) -> Result<bool> {
@@ -1058,26 +906,6 @@ fn already_remote_control_status(mode: RemoteControlMode) -> RemoteControlStatus
     }
 }
 
-#[cfg(any(unix, windows))]
-fn restart_decision(
-    mode: RestartMode,
-    info: Option<&client::ProbeInfo>,
-    managed_version: Option<&str>,
-) -> RestartDecision {
-    match (mode, info, managed_version) {
-        (RestartMode::IfBinaryOrVersionChanged, _, _) => {
-            unreachable!("binary comparison is resolved before restart decision")
-        }
-        (RestartMode::IfVersionChanged, None, _) => RestartDecision::NotReady,
-        (RestartMode::IfVersionChanged, Some(info), Some(managed_version))
-            if info.app_server_version == managed_version =>
-        {
-            RestartDecision::AlreadyCurrent
-        }
-        _ => RestartDecision::Restart,
-    }
-}
-
 #[cfg(unix)]
 fn try_lock_file(file: &tokio::fs::File) -> Result<bool> {
     use std::os::fd::AsRawFd;
@@ -1112,10 +940,6 @@ mod tests {
     use super::LifecycleStatus;
     use super::RemoteControlStartOutput;
     use super::RemoteControlStatus;
-    use super::RestartDecision;
-    use super::RestartMode;
-    use super::restart_decision;
-    use crate::client::ProbeInfo;
     #[cfg(unix)]
     use crate::settings::DaemonSettings;
 
@@ -1124,40 +948,6 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&RemoteControlStatus::AlreadyEnabled).expect("serialize"),
             "\"alreadyEnabled\""
-        );
-    }
-
-    #[test]
-    fn restart_decision_preserves_forced_refreshes() {
-        let current_info = ProbeInfo {
-            app_server_version: "0.1.0".to_string(),
-        };
-
-        assert_eq!(
-            [
-                restart_decision(
-                    RestartMode::IfVersionChanged,
-                    Some(&current_info),
-                    Some("0.1.0"),
-                ),
-                restart_decision(
-                    RestartMode::IfVersionChanged,
-                    /*info*/ None,
-                    /*managed_version*/ None,
-                ),
-                restart_decision(RestartMode::Always, Some(&current_info), Some("0.1.0")),
-                restart_decision(
-                    RestartMode::Always,
-                    /*info*/ None,
-                    /*managed_version*/ None,
-                ),
-            ],
-            [
-                RestartDecision::AlreadyCurrent,
-                RestartDecision::NotReady,
-                RestartDecision::Restart,
-                RestartDecision::Restart,
-            ]
         );
     }
 
