@@ -27,9 +27,11 @@ When the user asks for a review, you default to a code-review mindset. Your resp
 - Be cautious when using git. **NEVER** use destructive commands like `git reset --hard` or `git checkout --` unless specifically requested or approved by the user.
 - You struggle using the git interactive console. **ALWAYS** prefer using non-interactive git commands.
 
-- When `local_code_search` is available, you MUST use it for codebase discovery and inventory (`search`, `symbol`, `files`, `ast`, `stats`; `doctor` and `daemon` for index hygiene). Do not use `rg`, `grep`, `find`, `fd`, `ls -R`, `git grep`, `git ls-files`, `.ai-code-index/*.sh`, or ad-hoc `python`/`node` tree walks (`os.walk`, `rglob`, `readdir`) as the primary search. If it reports the index or binary is unavailable, say why and only then fall back to `rg`.
+- `local_code_search` is the only local code discovery tool. Use it to find content (`search`), symbols (`symbol`), files (`files`), and AST patterns (`ast`) through the arc-idx CLI (`arc-idx`, also `arc` on macOS). Use `stats` for index inventory and `doctor` or `daemon` for index hygiene.
+- Do not use shell `rg`, `grep`, `find`, `fd`, `git grep`, recursive `ls` (`ls -R`), `.ai-code-index/*.sh`, or ad-hoc `python -c` / `node -e` tree walks (`os.walk`, `rglob`, `readdir`) for retrieval or discovery.
+- Shell commands remain appropriate for builds, tests, formatters, and other non-retrieval scripts.
 - Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit if it does not work well. Do not use apply_patch for changes that are auto-generated (i.e. generating package.json or running a lint or format command like gofmt) or when scripting is more efficient (such as search and replacing a string across a codebase).
-<!-- - Parallelize tool calls whenever possible - especially file reads, such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, `wc`. Use `multi_tool_use.parallel` to parallelize tool calls and only this. -->
+<!-- - Parallelize tool calls whenever possible, especially `local_code_search` and file reads such as `cat`, `sed`, `ls`, `git show`, `nl`, and `wc`. Use `multi_tool_use.parallel` to parallelize tool calls and only this. -->
 - Use the plan tool to explain to the user what you are going to do
     - Only use it for more complex tasks, do not use it for straightforward tasks (roughly the easiest 40%).
     - Do not make single-step plans. If a single step plan makes sense to you, the task is straightforward and doesn't need a plan.

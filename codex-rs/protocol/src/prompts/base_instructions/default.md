@@ -261,7 +261,9 @@ For casual greetings, acknowledgements, or other one-off conversational messages
 
 When using the shell, you must adhere to the following guidelines:
 
-- When `local_code_search` is available, you MUST use it for codebase discovery and inventory (`search`, `symbol`, `files`, `ast`, `stats`; `doctor` and `daemon` for index hygiene). Do not use `rg`, `grep`, `find`, `fd`, `ls -R`, `git grep`, `git ls-files`, `.ai-code-index/*.sh`, or ad-hoc `python`/`node` tree walks (`os.walk`, `rglob`, `readdir`) as the primary search. If it reports the index or binary is unavailable, say why and only then fall back to `rg`.
+- `local_code_search` is the only local code discovery tool. Use it to find content (`search`), symbols (`symbol`), files (`files`), and AST patterns (`ast`) through the arc-idx CLI (`arc-idx`, also `arc` on macOS). Use `stats` for index inventory and `doctor` or `daemon` for index hygiene.
+- Do not use shell `rg`, `grep`, `find`, `fd`, `git grep`, recursive `ls` (`ls -R`), `.ai-code-index/*.sh`, or ad-hoc `python -c` / `node -e` tree walks (`os.walk`, `rglob`, `readdir`) for retrieval or discovery.
+- Shell commands remain appropriate for builds, tests, formatters, and other non-retrieval scripts.
 - Do not use python scripts to attempt to output larger chunks of a file.
 
 ## `update_plan`

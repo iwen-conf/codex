@@ -164,10 +164,7 @@ pub struct FeatureToggleToml {
 ///
 /// When the section is omitted, search stays enabled and the command is
 /// resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then
-/// `~/.local/bin/arc-idx`. The shell guard that rejects primary codebase
-/// discovery (`rg`, `grep`, `find`, `fd`, `ls -R`, `git grep`, `git ls-files`,
-/// `.ai-code-index/*.sh`, and ad-hoc `python`/`node` tree walks) runs only
-/// after that command is found.
+/// `~/.local/bin/arc-idx`.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct LocalSearchToml {
