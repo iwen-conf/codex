@@ -277,7 +277,7 @@ async fn prepare_from_package(
     windows::validate_selection(&root)?;
     if mode == InstallMode::Replace {
         let stopped = async {
-            crate::backend::pid_update_loop_backend(daemon.backend_paths(settings))
+            crate::backend::legacy_updater_cleanup_backend(daemon.backend_paths(settings))
                 .stop()
                 .await?;
             anyhow::ensure!(
