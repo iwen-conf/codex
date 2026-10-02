@@ -22,7 +22,6 @@ mod remote_control_client;
 mod settings;
 pub mod telemetry;
 mod thread_recovery;
-mod update_loop;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -277,25 +276,6 @@ pub async fn set_remote_control(mode: RemoteControlMode) -> Result<RemoteControl
     Box::pin(Daemon::from_environment()?.set_remote_control(mode)).await
 }
 
-pub async fn run_pid_update_loop(
-    http_client_factory: codex_http_client::HttpClientFactory,
-    restore_release: Option<String>,
-) -> Result<()> {
-    ensure_supported_platform()?;
-    #[cfg(windows)]
-    backend::windows::ensure_not_elevated()?;
-    update_loop::run(http_client_factory, restore_release).await
-}
-
-pub async fn update(
-    http_client_factory: codex_http_client::HttpClientFactory,
-) -> Result<UpdateOutput> {
-    ensure_supported_platform()?;
-    #[cfg(windows)]
-    backend::windows::ensure_not_elevated()?;
-    update_loop::request_manual_update(&Daemon::from_environment()?, http_client_factory).await
-}
-
 #[cfg(any(unix, windows))]
 fn ensure_supported_platform() -> Result<()> {
     Ok(())
@@ -471,11 +451,9 @@ impl Daemon {
         prepare_install::prepare(self, &settings).await?;
         let mut managed = self.clone();
         managed.managed_codex_bin = self.current_managed_codex_bin()?;
-        if !settings.auto_update_enabled {
-            backend::pid_update_loop_backend(self.backend_paths(&settings))
-                .stop()
-                .await?;
-        }
+        backend::pid_update_loop_backend(self.backend_paths(&settings))
+            .stop()
+            .await?;
 
         managed.ensure_managed_codex_bin()?;
         if let Some(backend) = self.running_backend_instance(&settings).await? {
@@ -891,42 +869,12 @@ impl Daemon {
     }
 
     async fn ensure_managed_updater(&self, settings: &DaemonSettings) -> Result<bool> {
-        let updater = backend::pid_update_loop_backend(self.backend_paths(settings));
-        if !settings.auto_update_enabled {
-            updater.stop().await?;
-            return Ok(false);
-        }
-        if !self.is_stable_standalone_release()? {
-            // An installer publishes current and the latest marker separately.
-            // Keep its updater alive while that publication may be in progress.
-            if !self.has_latest_selection_marker() {
-                updater.stop().await?;
-            }
-            return Ok(false);
-        }
-        let Ok(codex_bin) =
-            managed_install::resolved_managed_codex_bin(&self.managed_codex_bin).await
-        else {
-            if !self.has_latest_selection_marker() {
-                updater.stop().await?;
-            }
-            return Ok(false);
-        };
-        if !managed_install::supports_daemon_update_loop(&codex_bin).await
-            || !self.is_stable_standalone_release()?
-            || !managed_install::resolved_managed_codex_bin(&self.managed_codex_bin)
-                .await
-                .is_ok_and(|selected| selected == codex_bin)
-        {
-            if !self.has_latest_selection_marker() {
-                updater.stop().await?;
-            }
-            return Ok(false);
-        }
-        backend::pid_update_loop_backend(self.backend_paths_with_bin(settings, &codex_bin))
-            .start()
+        // KAG never runs the upstream Codex updater. Stop any updater left by an
+        // older installation so it cannot fetch or select an official release.
+        backend::pid_update_loop_backend(self.backend_paths(settings))
+            .stop()
             .await?;
-        Ok(true)
+        Ok(false)
     }
 
     fn is_stable_standalone_release(&self) -> Result<bool> {
@@ -963,14 +911,7 @@ impl Daemon {
     }
 
     async fn is_bootstrapped(&self, settings: &DaemonSettings) -> Result<bool> {
-        if !settings.auto_update_enabled
-            || !self.is_stable_standalone_release()?
-            || !managed_install::supports_daemon_update_loop(&self.managed_codex_bin).await
-        {
-            return Ok(self.running_backend_instance(settings).await?.is_some());
-        }
-        let updater = backend::pid_update_loop_backend(self.backend_paths(settings));
-        updater.is_starting_or_running().await
+        Ok(self.running_backend_instance(settings).await?.is_some())
     }
 
     fn ensure_managed_codex_bin(&self) -> Result<()> {
