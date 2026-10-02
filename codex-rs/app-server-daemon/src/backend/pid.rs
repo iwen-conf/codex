@@ -86,7 +86,7 @@ enum PidFileState {
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 enum PidCommandKind {
     AppServer { remote_control_enabled: bool },
-    UpdateLoop { restore_release: Option<String> },
+    LegacyUpdaterCleanup,
 }
 
 impl PidBackend {
@@ -112,18 +112,14 @@ impl PidBackend {
         }
     }
 
-    pub(crate) fn new_update_loop(
-        codex_bin: PathBuf,
-        pid_file: PathBuf,
-        restore_release: Option<String>,
-    ) -> Self {
+    pub(crate) fn new_legacy_updater_cleanup(codex_bin: PathBuf, pid_file: PathBuf) -> Self {
         let lock_file = pid_file.with_extension("pid.lock");
         Self {
             feature_overrides: BTreeMap::new(),
             codex_bin,
             pid_file,
             lock_file,
-            command_kind: PidCommandKind::UpdateLoop { restore_release },
+            command_kind: PidCommandKind::LegacyUpdaterCleanup,
         }
     }
 
@@ -201,7 +197,7 @@ impl PidBackend {
                             tracing::warn!(%pid, %err, "managed app-server shutdown request failed; waiting for force deadline");
                         }
                     }
-                    PidCommandKind::UpdateLoop { .. } => {
+                    PidCommandKind::LegacyUpdaterCleanup => {
                         fs::write(self.pid_file.with_extension("shutdown"), pid.to_string())
                             .await
                             .context("failed to request updater shutdown")?;
@@ -393,17 +389,7 @@ impl PidBackend {
             PidCommandKind::AppServer {
                 remote_control_enabled: false,
             } => vec!["app-server".into(), "--listen".into(), "unix://".into()],
-            PidCommandKind::UpdateLoop { restore_release } => {
-                let mut args = vec![
-                    "app-server".into(),
-                    "daemon".into(),
-                    "pid-update-loop".into(),
-                ];
-                if let Some(release) = restore_release {
-                    args.extend(["--restore-release".into(), release.as_str().into()]);
-                }
-                args
-            }
+            PidCommandKind::LegacyUpdaterCleanup => Vec::new(),
         };
         if matches!(self.command_kind, PidCommandKind::AppServer { .. }) {
             // Match first-party clients' default while preserving explicit analytics opt-outs.
@@ -424,7 +410,7 @@ impl PidBackend {
             PidCommandKind::AppServer {
                 remote_control_enabled: true,
             }
-            | PidCommandKind::UpdateLoop { .. } => None,
+            | PidCommandKind::LegacyUpdaterCleanup => None,
         }
     }
 
@@ -432,9 +418,9 @@ impl PidBackend {
         match self.command_kind {
             PidCommandKind::AppServer { .. } => terminate_process(pid),
             #[cfg(unix)]
-            PidCommandKind::UpdateLoop { .. } => terminate_process_group(pid),
+            PidCommandKind::LegacyUpdaterCleanup => terminate_process_group(pid),
             #[cfg(not(unix))]
-            PidCommandKind::UpdateLoop { .. } => terminate_process(pid),
+            PidCommandKind::LegacyUpdaterCleanup => terminate_process(pid),
         }
     }
 
@@ -442,7 +428,7 @@ impl PidBackend {
     fn force_terminate_process(&self, pid: u32) -> Result<()> {
         match self.command_kind {
             PidCommandKind::AppServer { .. } => force_terminate_process(pid),
-            PidCommandKind::UpdateLoop { .. } => force_terminate_process_group(pid),
+            PidCommandKind::LegacyUpdaterCleanup => force_terminate_process_group(pid),
         }
     }
 
