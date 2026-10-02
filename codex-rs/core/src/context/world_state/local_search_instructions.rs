@@ -49,3 +49,31 @@ impl WorldStateSection for LocalSearchInstructionsState {
         )
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::LocalSearchInstructionsState;
+    use super::PreviousSectionState;
+    use super::WorldStateSection;
+
+    #[test]
+    fn emits_guidance_when_tool_becomes_available() {
+        let state = LocalSearchInstructionsState::new(true);
+        let (snapshot, fragment) = state.render_diff(PreviousSectionState::Absent);
+        assert_eq!(snapshot, Some(true));
+        let fragment = fragment.expect("available guidance");
+        assert!(fragment.body().contains("is available for this workspace"));
+    }
+
+    #[test]
+    fn emits_fallback_guidance_when_tool_disappears() {
+        let state = LocalSearchInstructionsState::new(false);
+        let previous = true;
+        let (snapshot, fragment) =
+            state.render_diff(PreviousSectionState::Known(&previous));
+        assert_eq!(snapshot, Some(false));
+        let fragment = fragment.expect("fallback guidance");
+        assert!(fragment.body().contains("is not available"));
+    }
+}
