@@ -72,7 +72,7 @@ pub async fn update_from_cli(
             .ok()
             .map(|info| info.app_server_version),
         managed_codex_path,
-        message: "The CLI package is selected and pinned. Run `codex app-server daemon update` to return to production updates.".to_string(),
+        message: "The current KAG CLI package is selected for the daemon. Public Codex update sources are disabled.".to_string(),
     }))
 }
 
@@ -264,16 +264,6 @@ async fn prepare_from_package(
         }
         std::fs::rename(stage.path(), &release)?;
     }
-    let standalone = home.join("packages/standalone");
-    let canonical_source = source.canonicalize()?;
-    let follows_latest = mode == InstallMode::Missing
-        && stable
-        && (standalone.join("current").canonicalize().ok().as_deref()
-            != Some(canonical_source.as_path())
-            || std::fs::read_to_string(standalone.join("auto-update-version"))
-                .ok()
-                .as_deref()
-                == canonical_source.file_name().and_then(|name| name.to_str()));
     anyhow::ensure!(
         managed_install::package_root(home) == previous_root
             && (backend.is_some() || crate::client::probe(&daemon.socket_path).await.is_err()),
@@ -309,7 +299,7 @@ async fn prepare_from_package(
         }
         .await;
         if let Err(error) = stopped {
-            if let Err(restore_error) = async {
+            if let Err(cleanup_error) = async {
                 daemon
                     .current_installation()?
                     .ensure_managed_updater(settings)
@@ -318,18 +308,14 @@ async fn prepare_from_package(
             .await
             {
                 eprintln!(
-                    "warning: failed to restore the daemon updater after replacement failed: {restore_error:#}"
+                    "warning: failed to stop a stale daemon updater after replacement failed: {cleanup_error:#}"
                 );
             }
             return Err(error);
         }
     }
     let marker = root.join("auto-update-version");
-    if follows_latest {
-        let temporary = tempfile::NamedTempFile::new_in(&root)?;
-        std::fs::write(temporary.path(), &name)?;
-        temporary.persist(marker)?;
-    } else if marker.exists() {
+    if marker.exists() {
         std::fs::remove_file(marker)?;
     }
     #[cfg(unix)]
