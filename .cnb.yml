@@ -15,7 +15,7 @@ main:
       stages:
         - name: cargo-check
           script: |
-            set -euo pipefail
+            set -eu
             cd codex-rs
             rustc --version
             cargo check -p codex-cli --bin codex
@@ -27,7 +27,7 @@ main:
       stages:
         - name: build
           script: |
-            set -euo pipefail
+            set -eu
             cd codex-rs
             rustc --version
             cargo build -p codex-cli --release --bin codex
@@ -44,7 +44,7 @@ main:
             description: "kag ${CNB_BRANCH} (linux x86_64)"
         - name: upload-asset
           script: |
-            set -euo pipefail
+            set -eu
             # shellcheck disable=SC1091
             source "$CNB_BUILD_WORKSPACE/.kag-artifact.env"
             test -f "$ARTIFACT"
