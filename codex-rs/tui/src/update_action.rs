@@ -7,18 +7,19 @@ pub enum UpdateAction {
     Daemon(DaemonUpdateSource),
 }
 
-/// Package source explicitly selected by the user in the daemon menu.
+/// Local daemon maintenance source.
+///
+/// KAG never downloads or restores an official Codex release. Daemon refreshes
+/// always copy the package belonging to the currently running KAG CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonUpdateSource {
-    PublicStable,
     ThisCli,
 }
 
 impl DaemonUpdateSource {
     pub fn command_args(self) -> &'static [&'static str] {
         match self {
-            Self::PublicStable => &["app-server", "daemon", "update"],
-            Self::ThisCli => &["app-server", "daemon", "update", "--from-cli", "--yes"],
+            Self::ThisCli => &["app-server", "daemon", "update", "--yes"],
         }
     }
 }

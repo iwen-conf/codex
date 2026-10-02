@@ -1,5 +1,4 @@
-//! Bounded observations for foreground callers. This module never exports telemetry;
-//! in particular, the detached updater must not create a telemetry provider.
+//! Bounded observations for foreground callers. KAG has no detached network updater.
 
 use std::path::Path;
 
