@@ -425,7 +425,7 @@ impl Daemon {
         prepare_install::prepare(self, &settings).await?;
         let mut managed = self.clone();
         managed.managed_codex_bin = self.current_managed_codex_bin()?;
-        backend::pid_update_loop_backend(self.backend_paths(&settings))
+        backend::legacy_updater_cleanup_backend(self.backend_paths(&settings))
             .stop()
             .await?;
 
@@ -676,7 +676,7 @@ impl Daemon {
         managed.ensure_managed_codex_bin()?;
         settings.save(&self.settings_file).await?;
 
-        backend::pid_update_loop_backend(self.backend_paths(&settings))
+        backend::legacy_updater_cleanup_backend(self.backend_paths(&settings))
             .stop()
             .await?;
         if let Some(backend) = self.running_backend_instance(&settings).await? {
@@ -742,7 +742,7 @@ impl Daemon {
     async fn stop_managed_updater(&self, settings: &DaemonSettings) -> Result<()> {
         // KAG never runs the upstream Codex updater. Stop any updater left by an
         // older installation so it cannot fetch or select an official release.
-        backend::pid_update_loop_backend(self.backend_paths(settings))
+        backend::legacy_updater_cleanup_backend(self.backend_paths(settings))
             .stop()
             .await
     }
