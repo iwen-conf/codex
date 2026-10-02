@@ -1155,7 +1155,7 @@ pub struct Config {
     /// Configured discoverable tools for tool suggestions.
     pub tool_suggest: ToolSuggestConfig,
 
-    /// Local `arc-idx` search (`local_code_search`). Omitted config is enabled.
+    /// Local `ai-code-index` protocol-v1 search (`local_code_search`). Omitted config is enabled.
     pub local_search: codex_config::config_toml::LocalSearchToml,
 
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
