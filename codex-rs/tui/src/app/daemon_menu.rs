@@ -56,13 +56,7 @@ impl App {
             .package_layout
             .is_some()
         });
-        let items = [
-            (
-                DaemonUpdateSource::PublicStable,
-                "Install latest public stable",
-            ),
-            (DaemonUpdateSource::ThisCli, "Use this CLI build"),
-        ]
+        let items = [(DaemonUpdateSource::ThisCli, "Use this KAG CLI build")]
         .into_iter()
         .map(|(source, name)| SelectionItem {
             name: name.to_string(),
@@ -93,12 +87,11 @@ impl App {
             return;
         }
         let mut explanation = match source {
-            DaemonUpdateSource::PublicStable => "Install the latest public stable release. Restore production updates; keep your automatic-update setting.".to_string(),
             DaemonUpdateSource::ThisCli => {
                 let version = codex_install_context::InstallContext::current()
                     .package_manifest()
                     .map_or_else(|| CODEX_CLI_VERSION.to_string(), |manifest| manifest.version.to_string());
-                format!("Use this CLI package v{version} from {}. Copy the complete package and pin it against automatic updates.", executable.display())
+                format!("Use this KAG CLI package v{version} from {}. Copy the complete local package into the daemon installation. No public Codex update source is used.", executable.display())
             }
         };
         explanation.push_str("\nThis may restart the daemon and interrupt active or queued work.\nCodex exits to update in this terminal. Relaunch it afterward.");
