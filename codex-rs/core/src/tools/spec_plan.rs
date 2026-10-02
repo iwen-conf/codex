@@ -18,7 +18,7 @@ use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
 use crate::tools::handlers::LocalCodeSearchHandler;
-use crate::tools::handlers::local_code_search::local_code_search_available;
+use crate::tools::handlers::local_code_search::local_code_search_backend;
 use crate::tools::handlers::NewContextWindowHandler;
 use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
@@ -1052,6 +1052,14 @@ fn tool_environment_mode(environments: &TurnEnvironmentSnapshot) -> ToolEnvironm
     ToolEnvironmentMode::from_count(environments.turn_environments().count())
 }
 
+fn local_search_supported_environment(environments: &TurnEnvironmentSnapshot) -> bool {
+    let mut environments = environments.turn_environments();
+    let Some(environment) = environments.next() else {
+        return false;
+    };
+    environments.next().is_none() && !environment.environment.is_remote()
+}
+
 fn any_environment_allows_login_shell(environments: &TurnEnvironmentSnapshot) -> bool {
     environments
         .turn_environments()
@@ -1153,9 +1161,11 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     let environment_mode = tool_environment_mode(context.environments);
 
     if turn_context.config.local_search.is_enabled()
-        && local_code_search_available(turn_context.config.local_search.command.as_deref())
+        && local_search_supported_environment(context.environments)
+        && let Some(executable) =
+            local_code_search_backend(turn_context.config.local_search.command.as_deref())
     {
-        registry.add(LocalCodeSearchHandler);
+        registry.add(LocalCodeSearchHandler::new(executable));
     }
 
     if turn_context.config.update_plan_enabled {
