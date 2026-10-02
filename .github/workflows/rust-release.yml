@@ -1510,8 +1510,6 @@ jobs:
       tag: ${{ github.ref_name }}
       make_latest: ${{ steps.release_name.outputs.make_latest }}
       prerelease: ${{ steps.release_name.outputs.prerelease }}
-      should_publish_npm: false
-      npm_tag: ${{ steps.npm_publish_settings.outputs.npm_tag }}
 
     steps:
       - name: Checkout repository
@@ -1543,7 +1541,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
-          pattern: "{{aarch64,x86_64}-{apple-darwin{,-app-server},unknown-linux-musl{,-app-server},pc-windows-msvc},*-symbols,argument-comment-lint-*,python-runtime-wheel-*,npm-packages}"
+          pattern: "{{aarch64,x86_64}-{apple-darwin{,-app-server},unknown-linux-musl{,-app-server},pc-windows-msvc},*-symbols,argument-comment-lint-*,python-runtime-wheel-*}"
 
       - name: Download verified provisioned macOS packages
         if: vars.CODEX_PROVISIONED_MACOS_CANDIDATE == 'true'
@@ -1599,25 +1597,6 @@ jobs:
           else
             echo "make_latest=true" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Determine npm publish settings
-        id: npm_publish_settings
-        env:
-          VERSION: ${{ steps.release_name.outputs.name }}
-        run: |
-          set -euo pipefail
-          version="${VERSION}"
-
-          if [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=" >> "$GITHUB_OUTPUT"
-          elif [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=alpha" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Stage installer scripts
@@ -1709,170 +1688,6 @@ jobs:
           config: .github/dotslash-provisioned-config.json
 
   # KAG is distributed as native release artifacts only. npm publication is disabled.
-  publish-npm:
-    if: ${{ false }}
-    name: publish-npm
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write # Required for OIDC
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          # Node 24 bundles npm >= 11.5.1, which trusted publishing requires.
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
-          scope: "@openai"
-
-      - name: Download npm tarballs from release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.release.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          version="$RELEASE_VERSION"
-          tag="$RELEASE_TAG"
-          mkdir -p dist/npm
-          patterns=(
-            "codex-npm-${version}.tgz"
-            "codex-npm-linux-*-${version}.tgz"
-            "codex-npm-darwin-*-${version}.tgz"
-            "codex-npm-win32-*-${version}.tgz"
-            "codex-responses-api-proxy-npm-${version}.tgz"
-            "codex-sdk-npm-${version}.tgz"
-          )
-          for pattern in "${patterns[@]}"; do
-            gh release download "$tag" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --pattern "$pattern" \
-              --dir dist/npm
-          done
-
-      # No NODE_AUTH_TOKEN needed because we use OIDC.
-      - name: Publish to npm
-        env:
-          VERSION: ${{ needs.release.outputs.version }}
-          NPM_TAG: ${{ needs.release.outputs.npm_tag }}
-        run: |
-          set -euo pipefail
-          prefix=""
-          if [[ -n "${NPM_TAG}" ]]; then
-            prefix="${NPM_TAG}-"
-          fi
-
-          root_tarball="dist/npm/codex-npm-${VERSION}.tgz"
-          sdk_tarball="dist/npm/codex-sdk-npm-${VERSION}.tgz"
-          # Keep this list in sync with CODEX_PLATFORM_PACKAGES in
-          # codex-cli/scripts/build_npm_package.py. The root wrapper advances
-          # @openai/codex@latest as soon as it publishes, so every platform
-          # package it aliases must already exist in the registry first.
-          platform_tarballs=(
-            "dist/npm/codex-npm-linux-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-linux-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-arm64-${VERSION}.tgz"
-          )
-
-          for required_tarball in "${platform_tarballs[@]}" "${root_tarball}"; do
-            if [[ ! -f "${required_tarball}" ]]; then
-              echo "Missing npm tarball: ${required_tarball}"
-              exit 1
-            fi
-          done
-
-          shopt -s nullglob
-          other_tarballs=()
-          for tarball in dist/npm/*-"${VERSION}".tgz; do
-            if [[ "${tarball}" == "${root_tarball}" || "${tarball}" == "${sdk_tarball}" ]]; then
-              continue
-            fi
-
-            is_platform_tarball=false
-            for platform_tarball in "${platform_tarballs[@]}"; do
-              if [[ "${tarball}" == "${platform_tarball}" ]]; then
-                is_platform_tarball=true
-                break
-              fi
-            done
-            if [[ "${is_platform_tarball}" == true ]]; then
-              continue
-            fi
-
-            other_tarballs+=("${tarball}")
-          done
-
-          # npm returns HTTP 409 when concurrent publishes update the same
-          # packument. Every platform tarball is a version of @openai/codex,
-          # so publish all tarballs serially.
-          tarballs=(
-            "${platform_tarballs[@]}"
-            "${other_tarballs[@]}"
-            "${root_tarball}"
-          )
-          # The SDK depends on this exact root package version.
-          if [[ -f "${sdk_tarball}" ]]; then
-            tarballs+=("${sdk_tarball}")
-          fi
-
-          for tarball in "${tarballs[@]}"; do
-            filename="$(basename "${tarball}")"
-            tag=""
-
-            case "${filename}" in
-              codex-npm-linux-*-"${VERSION}".tgz|codex-npm-darwin-*-"${VERSION}".tgz|codex-npm-win32-*-"${VERSION}".tgz)
-                platform="${filename#codex-npm-}"
-                platform="${platform%-${VERSION}.tgz}"
-                tag="${prefix}${platform}"
-                ;;
-              codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
-                tag="${NPM_TAG}"
-                ;;
-              *)
-                echo "Unexpected npm tarball: ${filename}"
-                exit 1
-                ;;
-            esac
-
-            # The workflow concurrency group holds the lock from this lookup
-            # through publish, including concurrent alpha/hotfix release runs.
-            if [[ "${NPM_TAG}" == "alpha" ]]; then
-              tag="$(python3 .github/scripts/npm_alpha_tag.py "${tarball}" "${VERSION}" "${tag}")"
-            fi
-
-            publish_cmd=(npm publish "${GITHUB_WORKSPACE}/${tarball}")
-            if [[ -n "${tag}" ]]; then
-              publish_cmd+=(--tag "${tag}")
-            fi
-
-            echo "+ ${publish_cmd[*]}"
-            set +e
-            publish_output="$("${publish_cmd[@]}" 2>&1)"
-            publish_status=$?
-            set -e
-
-            echo "${publish_output}"
-            if [[ ${publish_status} -eq 0 ]]; then
-              continue
-            fi
-
-            if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
-              echo "Skipping already-published package version for ${filename}"
-              continue
-            fi
-
-            exit "${publish_status}"
-          done
 
   deploy-dev-website:
     name: Trigger developers.openai.com deploy
@@ -1970,7 +1785,7 @@ jobs:
       ${{
         !cancelled() &&
         needs.release.result == 'success' &&
-        needs.release.outputs.npm_tag == 'alpha' &&
+        contains(needs.release.outputs.version, '-alpha.') &&
         needs.publish-r2.result == 'success'
       }}
     permissions:
