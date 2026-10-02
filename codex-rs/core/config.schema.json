@@ -2290,7 +2290,7 @@
     },
     "LocalSearchToml": {
       "additionalProperties": false,
-      "description": "`[local_search]` config for the `local_code_search` tool (`arc-idx`).\n\nWhen the section is omitted, search stays enabled and the command is resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then `~/.local/bin/arc-idx`.",
+      "description": "`[local_search]` config for the `local_code_search` tool (`arc-idx`).\n\nWhen the section is omitted, search stays enabled and the command is resolved from `ARC_IDX_BIN`, then `arc-idx` on `PATH`, then `arc` on macOS, then `~/.local/bin/arc-idx` (or `~/.local/bin/arc` on macOS). The tool is only exposed when the resolved executable is actually runnable.",
       "properties": {
         "command": {
           "description": "Executable name or absolute path. Unset uses the default resolution order.",
