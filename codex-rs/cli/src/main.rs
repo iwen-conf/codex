@@ -642,13 +642,10 @@ enum AppServerDaemonSubcommand {
     /// Restart the local app server daemon.
     Restart,
 
-    /// Update the daemon package (may interrupt running work).
+    /// Replace the daemon package with this KAG CLI package (may interrupt running work).
     Update {
-        /// Copy and pin this CLI package.
-        #[arg(long)]
-        from_cli: bool,
         /// Confirm replacing the daemon package without an interactive prompt.
-        #[arg(short = 'y', long, requires = "from_cli")]
+        #[arg(short = 'y', long)]
         yes: bool,
     },
 
@@ -664,16 +661,6 @@ enum AppServerDaemonSubcommand {
     /// Print local CLI and running app-server versions as JSON.
     Version,
 
-    /// [internal] Run the detached pid-backed standalone updater loop.
-    #[clap(hide = true)]
-    PidUpdateLoop {
-        /// Check support for daemon-owned packages without starting the updater.
-        #[arg(long, hide = true)]
-        check_package_ownership: bool,
-        /// Authorize one production restoration of this selected release.
-        #[arg(long, hide = true)]
-        restore_release: Option<String>,
-    },
 }
 
 #[derive(Debug, Args)]
@@ -1209,10 +1196,7 @@ async fn cli_main(
                     AppServerDaemonSubcommand::Restart => {
                         print_app_server_daemon_output(AppServerLifecycleCommand::Restart).await?;
                     }
-                    AppServerDaemonSubcommand::Update {
-                        from_cli: true,
-                        yes,
-                    } => {
+                    AppServerDaemonSubcommand::Update { yes } => {
                         let result = codex_app_server_daemon::update_from_cli(|request| {
                             daemon_install::confirm_install(request, yes)
                         })
