@@ -74,10 +74,7 @@ async fn seeds_full_package() {
         std::fs::read(selected.join("codex-resources/nested/runtime")).expect("runtime"),
         b"runtime"
     );
-    assert_eq!(
-        std::fs::read_to_string(standalone.join("auto-update-version")).expect("marker"),
-        selected.file_name().expect("name").to_string_lossy()
-    );
+    assert!(!standalone.join("auto-update-version").exists());
     assert!(validate_package(&selected).is_ok());
 }
 
@@ -170,15 +167,15 @@ async fn legacy_selection_is_not_migrated_or_refreshed() {
 }
 
 #[tokio::test]
-async fn standalone_seed_preserves_explicit_pin_or_latest_channel() {
-    for follows_latest in [false, true] {
+async fn standalone_seed_is_always_pinned_in_kag() {
+    for legacy_latest_marker in [false, true] {
         let temp = tempfile::TempDir::new().unwrap();
         let home = temp.path().join("home");
         let standalone = home.join("packages/standalone");
         let source = standalone.join("releases/0.152.0-local-target");
         let bin = package(&source, "0.152.0");
         std::os::unix::fs::symlink(&source, standalone.join("current")).unwrap();
-        if follows_latest {
+        if legacy_latest_marker {
             std::fs::write(
                 standalone.join("auto-update-version"),
                 "0.152.0-local-target",
@@ -196,11 +193,8 @@ async fn standalone_seed_preserves_explicit_pin_or_latest_channel() {
         .await
         .unwrap();
         let root = home.join("packages/app-server-daemon");
-        let selected = root.join("current").canonicalize().unwrap();
-        assert_eq!(
-            std::fs::read_to_string(root.join("auto-update-version")).ok(),
-            follows_latest.then(|| selected.file_name().unwrap().to_string_lossy().into_owned())
-        );
+        assert!(root.join("current").canonicalize().is_ok());
+        assert!(!root.join("auto-update-version").exists());
     }
 }
 
@@ -224,23 +218,32 @@ async fn explicit_selection_requires_unchanged_cli_and_pins_all_versions() {
         .await
         .unwrap();
         if legacy {
+            let selected_name = home
+                .join("packages/app-server-daemon/current")
+                .canonicalize()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_owned();
             std::fs::rename(
                 home.join("packages/app-server-daemon"),
                 home.join("packages/standalone"),
             )
             .unwrap();
             let root = home.join("packages/standalone");
-            let name = std::fs::read_to_string(root.join("auto-update-version")).unwrap();
             std::fs::remove_file(root.join("current")).unwrap();
-            std::os::unix::fs::symlink(root.join("releases").join(name), root.join("current"))
-                .unwrap();
+            std::os::unix::fs::symlink(
+                root.join("releases").join(selected_name),
+                root.join("current"),
+            )
+            .unwrap();
             let state = home.join("app-server-daemon");
             std::fs::create_dir_all(&state).unwrap();
             std::fs::write(state.join("app-server.stderr.log"), b"").unwrap();
         }
         let initial_root = crate::managed_install::package_root(&home);
         let legacy_release = initial_root.join("current").canonicalize().unwrap();
-        let legacy_marker = std::fs::read(initial_root.join("auto-update-version")).unwrap();
+        let legacy_marker = std::fs::read(initial_root.join("auto-update-version")).ok();
         let error = prepare_from_package(
             &daemon(&home),
             &settings,
@@ -266,7 +269,7 @@ async fn explicit_selection_requires_unchanged_cli_and_pins_all_versions() {
             legacy_release
         );
         assert_eq!(
-            std::fs::read(initial_root.join("auto-update-version")).unwrap(),
+            std::fs::read(initial_root.join("auto-update-version")).ok(),
             legacy_marker
         );
         let root = home.join("packages/app-server-daemon");
@@ -326,7 +329,7 @@ async fn explicit_selection_requires_unchanged_cli_and_pins_all_versions() {
                     legacy_release
                 );
                 assert_eq!(
-                    std::fs::read(initial_root.join("auto-update-version")).unwrap(),
+                    std::fs::read(initial_root.join("auto-update-version")).ok(),
                     legacy_marker
                 );
             }
